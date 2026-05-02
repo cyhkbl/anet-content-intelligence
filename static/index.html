@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Content Intelligence Mesh · #AgentNetwork</title>
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --panel: #0f141c;
+      --panel-2: #141b25;
+      --fg: #cde6ff;
+      --fg-dim: #8ea2b8;
+      --green: #30e28a;
+      --amber: #ffcb6b;
+      --red: #ff6363;
+      --blue: #7aa7ff;
+      --violet: #c792ea;
+      --border: #1e2a3a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+      font-family: "JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace;
+      font-size: 13px; min-height: 100vh;
+    }
+    header {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+      background: linear-gradient(180deg, #0f1722 0%, #0a0e14 100%);
+    }
+    header h1 { font-size: 15px; margin: 0; color: var(--green); font-weight: 600; letter-spacing: 0.5px; }
+    header .tag { color: var(--fg-dim); font-size: 12px; }
+    header .badge {
+      background: #112; color: var(--green); border: 1px solid var(--green);
+      padding: 2px 8px; border-radius: 3px; font-size: 11px;
+    }
+    main {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px;
+      max-width: 1600px; margin: 0 auto;
+    }
+    section {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; min-height: 180px;
+    }
+    section header {
+      padding: 8px 12px; background: var(--panel-2);
+      border-bottom: 1px solid var(--border); display: flex;
+      justify-content: space-between; align-items: center;
+    }
+    section header h2 {
+      margin: 0; font-size: 12px; color: var(--amber); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .inner { padding: 12px; overflow: auto; max-height: 520px; }
+    .wide { grid-column: 1 / -1; }
+
+    /* Mesh graph */
+    #meshWrap { position: relative; height: 360px; background: radial-gradient(circle at 50% 50%, #0d1420 0%, #080b10 100%); }
+    svg.mesh { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .edge { stroke: #223; stroke-width: 1; opacity: 0.6; }
+    .edge.active { stroke: var(--green); stroke-width: 2; opacity: 1;
+                   stroke-dasharray: 6 4; animation: dash 0.8s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -20; } }
+    .node circle { fill: var(--panel-2); stroke: #2a3a55; stroke-width: 1.5; transition: all 0.2s; }
+    .node.active circle { fill: #122036; stroke: var(--green); stroke-width: 2.5;
+                          filter: drop-shadow(0 0 10px var(--green)); }
+    .node.orchestrator circle { stroke: var(--amber); }
+    .node.orchestrator.active circle { stroke: var(--amber); filter: drop-shadow(0 0 10px var(--amber)); }
+    .node text { fill: var(--fg); font-size: 10px; text-anchor: middle; font-family: inherit; }
+    .node .skill { fill: var(--fg-dim); font-size: 9px; }
+    .node.active text { fill: var(--green); font-weight: 700; }
+
+    /* Services catalogue */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #151e2b; }
+    th { background: #0b1018; color: var(--fg-dim); font-weight: 400; }
+    td.skill { color: var(--blue); }
+    td.svc { color: var(--violet); }
+    td.peer { color: var(--fg-dim); font-size: 11px; }
+    td.cost { color: var(--amber); }
+    td.cost.free { color: var(--fg-dim); }
+
+    /* Execution log */
+    .log { font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+    .log .t { color: var(--fg-dim); }
+    .log .ok { color: var(--green); }
+    .log .err { color: var(--red); }
+    .log .warn { color: var(--amber); }
+    .log .k { color: var(--blue); }
+    .log .v { color: var(--violet); }
+
+    /* Analyzer */
+    textarea {
+      width: 100%; background: #050810; color: var(--fg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 10px; font: inherit; min-height: 80px; resize: vertical;
+    }
+    textarea:focus { outline: 1px solid var(--green); }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+    button, select {
+      background: #0b1220; color: var(--fg); border: 1px solid var(--border);
+      padding: 7px 14px; border-radius: 4px; font: inherit; cursor: pointer;
+    }
+    button.primary { background: #133a28; border-color: var(--green); color: var(--green); }
+    button.primary:hover { background: #1b5a3d; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .examples button { background: #111a28; color: var(--blue); padding: 4px 8px; font-size: 11px; }
+
+    /* Report card */
+    .report { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .report .card {
+      background: #0b121c; border: 1px solid var(--border); padding: 10px 12px; border-radius: 4px;
+    }
+    .report .card h3 {
+      margin: 0 0 6px 0; font-size: 11px; color: var(--fg-dim);
+      text-transform: uppercase; letter-spacing: 1px; font-weight: 500;
+    }
+    .report .card .v { font-size: 14px; color: var(--fg); line-height: 1.45; }
+    .report .card.sent-positive .v { color: var(--green); }
+    .report .card.sent-negative .v { color: var(--red); }
+    .report .card.sent-neutral  .v { color: var(--fg); }
+    .pill {
+      display: inline-block; background: #1a2433; color: var(--blue);
+      padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px 4px 0 0;
+    }
+    .pill.org { color: var(--violet); }
+    .pill.num { color: var(--amber); }
+    .pill.factcheck { color: var(--red); }
+
+    footer {
+      padding: 10px 18px; border-top: 1px solid var(--border);
+      color: var(--fg-dim); font-size: 11px; text-align: center;
+    }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+           background: #555; margin-right: 4px; vertical-align: middle; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.err { background: var(--red); }
+    .kbd { background: #131c27; border: 1px solid var(--border); border-radius: 3px;
+           padding: 1px 5px; font-size: 11px; color: var(--fg-dim); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>◢ CONTENT INTELLIGENCE MESH</h1>
+      <div class="tag">self-composing multi-agent pipeline · AgentNetwork P2P</div>
+    </div>
+    <div class="row">
+      <span id="connDot" class="dot"></span>
+      <span id="connText" class="tag">connecting…</span>
+      <span class="badge">#AgentNetwork</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="wide">
+      <header><h2>P2P MESH · live topology</h2>
+        <span id="meshCount" class="tag">0 services</span>
+      </header>
+      <div id="meshWrap">
+        <svg class="mesh" id="meshSvg" viewBox="0 0 900 360" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+    </section>
+
+    <section>
+      <header><h2>Analyze text (fires orchestrator)</h2></header>
+      <div class="inner">
+        <textarea id="txt" placeholder="Enter text to analyze…">OpenAI announced its newest AI model today, sending shares of Nvidia rising 12% in the stock market. CEO Sam Altman said the launch is a major breakthrough for artificial intelligence and product growth.</textarea>
+        <div class="row">
+          <select id="intent">
+            <option value="analyze">intent: analyze (auto)</option>
+            <option value="translate-to-zh">intent: translate to zh</option>
+          </select>
+          <button class="primary" id="runBtn">▶ Run pipeline</button>
+          <span id="runStatus" class="tag"></span>
+        </div>
+        <div class="row examples">
+          <span class="tag">presets:</span>
+          <button data-preset="news">news (en)</button>
+          <button data-preset="zh">weather (zh)</button>
+          <button data-preset="neg">layoffs</button>
+          <button data-preset="fc">factcheck</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <header><h2>Execution log · live P2P events</h2>
+        <button id="clearLogBtn" style="padding:3px 8px;font-size:11px;">clear</button>
+      </header>
+      <div class="inner log" id="log"></div>
+    </section>
+
+    <section class="wide">
+      <header><h2>Report</h2>
+        <span id="reportMeta" class="tag"></span>
+      </header>
+      <div class="inner">
+        <div id="report" class="report"><span class="tag">No run yet. Hit ▶ Run pipeline.</span></div>
+      </div>
+    </section>
+
+    <section class="wide">
+      <header><h2>Discovered services · ANS catalogue</h2></header>
+      <div class="inner">
+        <table>
+          <thead>
+            <tr><th>skill</th><th>service</th><th>peer</th><th>cost</th><th>tags</th></tr>
+          </thead>
+          <tbody id="svcTbody"><tr><td colspan="5" class="tag">waiting on stream…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span class="kbd">bash scripts/run.sh</span> spins up 9 daemons + 9 agents + this dashboard.
+    Orchestrator auto-discovers every <span style="color:var(--green)">content-intel</span> skill.
+    Add one anywhere on the mesh and it joins the pipeline.
+  </footer>
+
+<script>
+const log = document.getElementById("log");
+const svcTbody = document.getElementById("svcTbody");
+const meshSvg = document.getElementById("meshSvg");
+const meshCount = document.getElementById("meshCount");
+const reportEl = document.getElementById("report");
+const reportMeta = document.getElementById("reportMeta");
+const runBtn = document.getElementById("runBtn");
+const runStatus = document.getElementById("runStatus");
+const connDot = document.getElementById("connDot");
+const connText = document.getElementById("connText");
+
+const PRESETS = {
+  news: "OpenAI announced its newest AI model today, sending shares of Nvidia rising 12% in the stock market. CEO Sam Altman said the launch is a major breakthrough for artificial intelligence and product growth.",
+  zh:   "上海明天天气怎么样？请用一句话总结。",
+  neg:  "Tesla stock fell 5% after the CEO announced major layoffs at the company.",
+  fc:   "The bank reported revenue of 9999% growth and shares jumped 3000% over night."
+};
+document.querySelectorAll(".examples button").forEach(b =>
+  b.addEventListener("click", () => document.getElementById("txt").value = PRESETS[b.dataset.preset]));
+
+function line(cls, text) {
+  const ts = new Date().toLocaleTimeString();
+  const el = document.createElement("div");
+  el.innerHTML = `<span class="t">[${ts}]</span> <span class="${cls||''}">${text}</span>`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+document.getElementById("clearLogBtn").onclick = () => { log.innerHTML = ""; };
+
+// ── mesh graph ──────────────────────────────────────────────────────────
+const NODE_LAYOUT = {
+  orchestrator:       { x: 450, y: 180, color: "var(--amber)" },
+  translate:          { x: 140, y:  70 },
+  "translate-en-zh":  { x: 140, y: 290 },
+  extract:            { x: 260, y:  40 },
+  keywords:           { x: 380, y:  40 },
+  sentiment:          { x: 520, y:  40 },
+  summarise:          { x: 640, y:  40 },
+  classify:           { x: 760, y:  70 },
+  factcheck:          { x: 760, y: 290 },
+};
+
+function renderMesh(catalogue) {
+  meshCount.textContent = `${catalogue.length} services`;
+  const bySkill = {};
+  for (const s of catalogue) (bySkill[s.skill] ||= []).push(s);
+
+  const edges = [];
+  const nodes = [];
+
+  for (const [skill, pos] of Object.entries(NODE_LAYOUT)) {
+    const live = bySkill[skill] && bySkill[skill].length > 0;
+    nodes.push({ skill, ...pos, live, peer: live ? bySkill[skill][0].short_peer : "" });
+    if (skill !== "orchestrator" && live) {
+      edges.push({ from: "orchestrator", to: skill });
+    }
+  }
+
+  let svg = "";
+  for (const e of edges) {
+    const a = NODE_LAYOUT[e.from], b = NODE_LAYOUT[e.to];
+    svg += `<line id="edge-${e.to}" class="edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"></line>`;
+  }
+  for (const n of nodes) {
+    const klass = `node ${n.skill==='orchestrator' ? 'orchestrator' : ''} ${n.live ? '' : 'dim'}`;
+    svg += `<g class="${klass}" id="node-${n.skill}" transform="translate(${n.x},${n.y})">
+      <circle r="30" opacity="${n.live ? 1 : 0.35}"></circle>
+      <text y="-4">${n.skill}</text>
+      <text class="skill" y="10">${n.live ? (n.peer || '●') : 'offline'}</text>
+    </g>`;
+  }
+  meshSvg.innerHTML = svg;
+}
+
+function flashNode(skill) {
+  const node = document.getElementById(`node-${skill}`);
+  const edge = document.getElementById(`edge-${skill}`);
+  if (node) {
+    node.classList.add("active");
+    setTimeout(() => node.classList.remove("active"), 1400);
+  }
+  if (edge) {
+    edge.classList.add("active");
+    setTimeout(() => edge.classList.remove("active"), 1400);
+  }
+}
+
+function renderCatalogue(catalogue) {
+  if (!catalogue || !catalogue.length) {
+    svcTbody.innerHTML = `<tr><td colspan="5" class="tag">(no services discovered yet)</td></tr>`;
+    return;
+  }
+  const rows = catalogue
+    .slice()
+    .sort((a, b) => (a.skill||'').localeCompare(b.skill||''))
+    .map(s => {
+      const cm = s.cost || {};
+      const costTxt = cm.free ? "free" : (cm.per_call ? `${cm.per_call} ¢/call` : "—");
+      const costKls = cm.free ? "cost free" : "cost";
+      const tags = (s.tags || []).slice(0, 4).map(t => `<span class="pill">${t}</span>`).join("");
+      return `<tr>
+        <td class="skill">${s.skill || ''}</td>
+        <td class="svc">${s.service || ''}</td>
+        <td class="peer">${(s.peer_id||'').slice(0, 20)}…</td>
+        <td class="${costKls}">${costTxt}</td>
+        <td>${tags || '<span class="tag">—</span>'}</td>
+      </tr>`;
+    }).join("");
+  svcTbody.innerHTML = rows;
+}
+
+function renderReport(r) {
+  if (r.error) { reportEl.innerHTML = `<span class="err">${r.error}</span>`; return; }
+  const cards = [];
+  cards.push(`<div class="card"><h3>Plan</h3><div class="v">${(r.pipeline_plan || []).join(" → ") || '(empty)'}</div></div>`);
+  if (r.summary) cards.push(`<div class="card"><h3>Summary</h3><div class="v">${esc(r.summary)}</div></div>`);
+  if (r.topic)   cards.push(`<div class="card"><h3>Topic</h3><div class="v">${r.topic} <span class="tag">conf ${r.topic_confidence ?? '—'}</span></div></div>`);
+  const sent = r.sentiment || {};
+  if (sent.label) cards.push(`<div class="card sent-${sent.label}"><h3>Sentiment</h3><div class="v">${sent.label} (${sent.score})</div></div>`);
+  if (r.keywords && r.keywords.length) {
+    cards.push(`<div class="card"><h3>Keywords</h3><div class="v">${r.keywords.map(k => `<span class="pill">${k.word} ${k.score}</span>`).join(' ')}</div></div>`);
+  }
+  if (r.entities && r.entities.length) {
+    cards.push(`<div class="card"><h3>Entities (${r.entity_count ?? r.entities.length})</h3><div class="v">${r.entities.slice(0,8).map(e => `<span class="pill ${e.type==='NUMBER'?'num':'org'}">${e.type}: ${esc(e.text)}</span>`).join(' ')}</div></div>`);
+  }
+  if (r.factcheck) {
+    const fc = r.factcheck;
+    const verdictColor = fc.verdict === 'clean' ? 'var(--green)' : fc.verdict === 'flagged' ? 'var(--red)' : 'var(--amber)';
+    cards.push(`<div class="card"><h3>Fact-check verdict</h3><div class="v" style="color:${verdictColor}">${fc.verdict}</div>
+      <div style="margin-top:4px;">${(fc.claims||[]).slice(0,4).map(c => `<span class="pill factcheck">${esc(c.claim)}: ${c.status}</span>`).join(' ')}</div></div>`);
+  }
+  if (r.translated) cards.push(`<div class="card"><h3>Translated (zh→en)</h3><div class="v">${esc(r.translated)}</div></div>`);
+  if (r.translated_zh) cards.push(`<div class="card"><h3>Translated (en→zh)</h3><div class="v">${esc(r.translated_zh)}</div></div>`);
+  cards.push(`<div class="card"><h3>P2P hops</h3><div class="v">${(r.pipeline||[]).length} calls · ${r.total_ms ?? '?'} ms · ${r.total_cost ?? 0} shells</div></div>`);
+  reportEl.innerHTML = cards.join("");
+  reportMeta.textContent = `plan=[${(r.pipeline_plan||[]).join(',')}] · ${r.total_ms}ms · ${r.total_cost} shells`;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── SSE ─────────────────────────────────────────────────────────────────
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => { connDot.classList.add("ok"); connText.textContent = "connected"; line("ok","▸ connected to /api/stream"); };
+  es.onerror = () => { connDot.classList.remove("ok"); connDot.classList.add("err"); connText.textContent = "disconnected"; };
+  es.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    switch (d.type) {
+      case "mesh.update":
+        renderMesh(d.catalogue);
+        renderCatalogue(d.catalogue);
+        line("ok", `▸ mesh update — ${d.count} services`);
+        break;
+      case "pipeline.start":
+        line("warn", `▸ pipeline.start · <span class="v">intent=${d.intent}</span> <span class="k">${esc(d.text)}</span>`);
+        break;
+      case "pipeline.step":
+        flashNode(d.skill);
+        line("ok", `  ↳ <span class="k">${d.skill}</span> → <span class="v">${d.svc}</span> @${d.peer}… <span class="t">${d.ms}ms · ${d.cost}¢</span>`);
+        break;
+      case "pipeline.end":
+        line("ok", `▸ pipeline.end · plan=<span class="k">${(d.plan||[]).join(',')}</span> · total=<span class="v">${d.total_ms}ms · ${d.total_cost}¢</span> · sentiment=${d.sentiment||'-'} topic=${d.topic||'-'}`);
+        break;
+      default:
+        line("", JSON.stringify(d));
+    }
+  };
+}
+
+// ── analyze button ──────────────────────────────────────────────────────
+runBtn.onclick = async () => {
+  const text = document.getElementById("txt").value.trim();
+  const intent = document.getElementById("intent").value;
+  if (!text) return;
+  runBtn.disabled = true;
+  runStatus.textContent = "running…";
+  reportEl.innerHTML = `<span class="tag">…running pipeline on P2P mesh…</span>`;
+  try {
+    const r = await fetch("/api/analyze", {
+      method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({ text, intent })
+    });
+    const body = await r.json();
+    renderReport(body);
+    runStatus.textContent = `done in ${body.total_ms} ms`;
+  } catch (e) {
+    line("err", `▸ analyze failed: ${e.message}`);
+    runStatus.textContent = "error";
+  } finally {
+    runBtn.disabled = false;
+  }
+};
+
+connect();
+// seed fetch in case SSE buffers
+fetch("/api/services").then(r => r.json()).then(d => { renderMesh(d.services); renderCatalogue(d.services); });
+</script>
+</body>
+</html>

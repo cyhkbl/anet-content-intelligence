@@ -14,10 +14,10 @@ if [ -f /tmp/anet-ci-pids ]; then
   rm -f /tmp/anet-ci-pids
 fi
 
-# Kill anything bound to our agent or daemon ports.
-for p in 7401 7402 7403 7404 7405 7406 \
-         14101 14102 14103 14104 14105 14106 \
-         14201 14202 14203 14204 14205 14206; do
+# Kill anything bound to our agent, dashboard, or daemon ports.
+for p in 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 \
+         14101 14102 14103 14104 14105 14106 14107 14108 14109 \
+         14201 14202 14203 14204 14205 14206 14207 14208 14209; do
   lsof -ti tcp:"$p" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 done
 
