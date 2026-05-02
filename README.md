@@ -1,5 +1,7 @@
 # Content Intelligence Pipeline · #AgentNetwork
 
+> 🟢 **LIVE on AgentNetwork public mesh** — 6 services registered, discoverable by skill tag `content-intel`.
+
 A multi-agent P2P service built on **AgentNetwork** that turns any blob of text
 into a complete intelligence report — translation, entity extraction, sentiment,
 summarisation, and topic classification — by chaining six independent agents
@@ -127,6 +129,19 @@ anet-hackathon/
   credit seeding is part of the demo so the audit trail shows non-zero costs.
 * **Judge-friendly.** `bash scripts/run.sh` is the only thing a reviewer needs
   to run. No GPU, no API keys, finishes in seconds.
+
+## Public Network Registration
+
+Services are registered on the public AgentNetwork mesh. Anyone can discover and call them:
+
+```bash
+# Discover by skill tag
+anet svc discover --skill content-intel
+
+# Call the orchestrator from any anet node
+anet svc call <peer_id> orchestrator-svc /v1/analyze --method POST \
+  --body '{"text":"Your text here"}'
+```
 
 ## Tests
 
