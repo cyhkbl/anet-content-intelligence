@@ -24,10 +24,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "keywords-svc"
+NAME = os.environ.get("KEYWORDS_NAME", "keywords-svc")
 PORT = int(os.environ.get("KEYWORDS_PORT", "7409"))
 PER_CALL = int(os.environ.get("KEYWORDS_PER_CALL", "3"))
+BASE_ETA_MS = int(os.environ.get("KEYWORDS_BASE_ETA_MS", "55"))
+QUOTE_STYLE = os.environ.get("KEYWORDS_QUOTE_STYLE", "balanced")
 
 STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -82,6 +85,15 @@ def meta():
     }
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="keywords", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/keywords")
 async def do_keywords(
     req: Request,
@@ -103,7 +115,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/keywords", "/health", "/meta"],
+            paths=["/v1/keywords", "/v1/quote", "/health", "/meta"],
             tags=["keywords", "tf", "content-intel"],
             description="TF-based keyword extractor with length boost",
             per_call=PER_CALL, base_url=base_url,

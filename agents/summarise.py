@@ -20,12 +20,15 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
 from anet_sdk import SvcClient  # noqa: E402
 
-NAME = "summarise-svc"
+NAME = os.environ.get("SUMMARISE_NAME", "summarise-svc")
 PORT = int(os.environ.get("SUMMARISE_PORT", "7404"))
 PER_CALL = int(os.environ.get("SUMMARISE_PER_CALL", "10"))
+BASE_ETA_MS = int(os.environ.get("SUMMARISE_BASE_ETA_MS", "120"))
+QUOTE_STYLE = os.environ.get("SUMMARISE_QUOTE_STYLE", "balanced")
 ANET_BASE_URL = os.environ.get("ANET_BASE_URL", "http://127.0.0.1:14104")
 
 SENTENCE_SPLIT = re.compile(r"(?<=[\.!?。！？])\s+")
@@ -83,6 +86,15 @@ def meta():
     }
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="summarise", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/summarise")
 async def do_summarise(
     req: Request,
@@ -109,7 +121,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/summarise", "/health", "/meta"],
+            paths=["/v1/summarise", "/v1/quote", "/health", "/meta"],
             tags=["summarise", "content-intel"],
             description="Extractive summariser (calls translate for zh input)",
             per_call=PER_CALL, base_url=ANET_BASE_URL,

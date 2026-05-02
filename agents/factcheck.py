@@ -23,10 +23,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "factcheck-svc"
+NAME = os.environ.get("FACTCHECK_NAME", "factcheck-svc")
 PORT = int(os.environ.get("FACTCHECK_PORT", "7407"))
 PER_CALL = int(os.environ.get("FACTCHECK_PER_CALL", "8"))
+BASE_ETA_MS = int(os.environ.get("FACTCHECK_BASE_ETA_MS", "90"))
+QUOTE_STYLE = os.environ.get("FACTCHECK_QUOTE_STYLE", "thorough")
 
 # Canonical organisation names — misspellings are flagged as suspect.
 KNOWN_ORGS = {
@@ -179,6 +182,15 @@ def meta():
     }
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="factcheck", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/factcheck")
 async def do_factcheck(
     req: Request,
@@ -200,7 +212,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/factcheck", "/health", "/meta"],
+            paths=["/v1/factcheck", "/v1/quote", "/health", "/meta"],
             tags=["factcheck", "verification", "content-intel"],
             description="Rule-based plausibility checker for numbers, dates, orgs",
             per_call=PER_CALL, base_url=base_url,

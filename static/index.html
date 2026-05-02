@@ -127,6 +127,23 @@
     .pill.num { color: var(--amber); }
     .pill.factcheck { color: var(--red); }
 
+    /* Auctions */
+    .auction { margin-bottom: 14px; border-left: 2px solid var(--border); padding-left: 10px; }
+    .auction h3 {
+      margin: 0 0 6px 0; font-size: 12px; color: var(--amber);
+      letter-spacing: 0.5px; text-transform: uppercase;
+    }
+    .auction table { font-size: 11px; }
+    .auction tr.winner td { background: #11281c; color: var(--green); }
+    .auction tr.no-quote td { color: var(--fg-dim); font-style: italic; }
+    .auction td.bid { color: var(--amber); }
+    .auction td.eta { color: var(--blue); }
+    .auction td.style { color: var(--violet); }
+
+    .vote-row { display:flex; gap:8px; align-items:center; padding:3px 0; }
+    .vote-row .l { color: var(--green); }
+    .vote-row .l-neg { color: var(--red); }
+
     footer {
       padding: 10px 18px; border-top: 1px solid var(--border);
       color: var(--fg-dim); font-size: 11px; text-align: center;
@@ -192,6 +209,34 @@
     </section>
 
     <section class="wide">
+      <header><h2>Reverse-auction · live bids per skill</h2>
+        <span id="auctionMeta" class="tag">no auction yet</span>
+      </header>
+      <div class="inner">
+        <div id="auctions"><span class="tag">Run a pipeline — competing providers will bid here.</span></div>
+      </div>
+    </section>
+
+    <section>
+      <header><h2>Consensus votes</h2></header>
+      <div class="inner" id="consensus"><span class="tag">consensus on sentiment fires when ≥2 providers offer it</span></div>
+    </section>
+
+    <section>
+      <header><h2>Reputation ledger</h2>
+        <button id="refreshRepBtn" style="padding:3px 8px;font-size:11px;">refresh</button>
+      </header>
+      <div class="inner">
+        <table>
+          <thead>
+            <tr><th>peer</th><th>service</th><th>wins</th><th>losses</th><th>score</th></tr>
+          </thead>
+          <tbody id="repTbody"><tr><td colspan="5" class="tag">no calls yet</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="wide">
       <header><h2>Report</h2>
         <span id="reportMeta" class="tag"></span>
       </header>
@@ -214,9 +259,10 @@
   </main>
 
   <footer>
-    <span class="kbd">bash scripts/run.sh</span> spins up 9 daemons + 9 agents + this dashboard.
-    Orchestrator auto-discovers every <span style="color:var(--green)">content-intel</span> skill.
-    Add one anywhere on the mesh and it joins the pipeline.
+    <span class="kbd">bash scripts/run.sh</span> spins up 10 daemons + 12 agents + this dashboard.
+    Orchestrator runs a <span style="color:var(--amber)">reverse auction</span> across providers
+    of every <span style="color:var(--green)">content-intel</span> skill.
+    Boot a competing service tomorrow — it joins the next auction automatically.
   </footer>
 
 <script>
@@ -230,6 +276,11 @@ const runBtn = document.getElementById("runBtn");
 const runStatus = document.getElementById("runStatus");
 const connDot = document.getElementById("connDot");
 const connText = document.getElementById("connText");
+const auctionsEl = document.getElementById("auctions");
+const auctionMeta = document.getElementById("auctionMeta");
+const consensusEl = document.getElementById("consensus");
+const repTbody = document.getElementById("repTbody");
+document.getElementById("refreshRepBtn").onclick = () => refreshReputation();
 
 const PRESETS = {
   news: "OpenAI announced its newest AI model today, sending shares of Nvidia rising 12% in the stock market. CEO Sam Altman said the launch is a major breakthrough for artificial intelligence and product growth.",
@@ -362,6 +413,81 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// ── auctions / consensus / reputation rendering ─────────────────────────
+const _auctionState = {};   // skill → quotes
+function renderAuction(skill, quotes, winner_peer, winner_service) {
+  _auctionState[skill] = { quotes, winner_peer, winner_service };
+  const blocks = Object.entries(_auctionState).map(([sk, a]) => {
+    const rows = (a.quotes || []).map(q => {
+      const cls = q.winner ? 'winner' : (q.no_quote ? 'no-quote' : '');
+      const styleTxt = q.no_quote ? 'no-quote' : esc(q.style || '-');
+      return `<tr class="${cls}">
+        <td>${esc(q.service||'?')}</td>
+        <td class="peer">${esc(q.peer||'?')}…</td>
+        <td class="bid">${q.bid}¢</td>
+        <td class="eta">${q.eta_ms}ms</td>
+        <td class="style">${styleTxt}</td>
+        <td>${q.score}</td>
+        <td>${q.rep_bonus ? q.rep_bonus : '0'}</td>
+        <td>${q.winner ? '🏆' : ''}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="auction">
+      <h3>auction · ${esc(sk)} · ${a.quotes.length} bidder${a.quotes.length===1?'':'s'} → ${esc(a.winner_service||'?')}</h3>
+      <table>
+        <thead><tr><th>service</th><th>peer</th><th>bid</th><th>eta</th><th>style</th><th>score</th><th>rep</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join("");
+  auctionsEl.innerHTML = blocks || `<span class="tag">…</span>`;
+  const skills = Object.keys(_auctionState);
+  auctionMeta.textContent = `${skills.length} auction${skills.length===1?'':'s'} this run`;
+}
+function clearAuctions() { for (const k of Object.keys(_auctionState)) delete _auctionState[k]; auctionsEl.innerHTML = `<span class="tag">…running auctions…</span>`; consensusEl.innerHTML = `<span class="tag">…</span>`; }
+
+function renderConsensus(cr) {
+  const rows = (cr.votes || []).map(v => {
+    const lkls = v.label === 'positive' ? 'l' : v.label === 'negative' ? 'l-neg' : '';
+    return `<div class="vote-row">
+      <span class="${lkls}">${esc(v.label||'?')}</span>
+      <span class="t">(${v.score ?? '-'})</span>
+      <span class="t">·</span>
+      <span class="v">${esc(v.service||'?')}</span>
+      <span class="t">@${esc(v.peer||'')}…</span>
+    </div>`;
+  }).join("");
+  const tally = Object.entries(cr.tally || {}).map(([k,v]) => `<span class="pill">${esc(k)}: ${v}</span>`).join(' ');
+  consensusEl.innerHTML = `<div><div style="margin-bottom:6px;">
+    <span class="tag">skill=</span><span class="k">${esc(cr.skill)}</span>
+    <span class="tag">majority=</span><span class="ok" style="color:var(--green)">${esc(cr.majority||'?')}</span>
+    <span class="tag">agreement=</span>${cr.agreement||'?'}
+    <span class="tag">tally:</span>${tally}
+  </div>${rows}</div>`;
+}
+
+function renderReputation(rep) {
+  if (!rep || !rep.length) {
+    repTbody.innerHTML = `<tr><td colspan="5" class="tag">no calls yet</td></tr>`;
+    return;
+  }
+  repTbody.innerHTML = rep.map(r => `<tr>
+    <td class="peer">${esc((r.peer||'').slice(0,20))}…</td>
+    <td class="svc">${esc(r.service||'?')}</td>
+    <td style="color:var(--green)">${r.wins}</td>
+    <td style="color:var(--red)">${r.losses}</td>
+    <td>${r.score}</td>
+  </tr>`).join("");
+}
+
+async function refreshReputation() {
+  try {
+    const r = await fetch("/api/marketplace");
+    const j = await r.json();
+    renderReputation(j.reputation || []);
+  } catch (e) { /* ignore */ }
+}
+
 // ── SSE ─────────────────────────────────────────────────────────────────
 function connect() {
   const es = new EventSource("/api/stream");
@@ -376,14 +502,25 @@ function connect() {
         line("ok", `▸ mesh update — ${d.count} services`);
         break;
       case "pipeline.start":
+        clearAuctions();
         line("warn", `▸ pipeline.start · <span class="v">intent=${d.intent}</span> <span class="k">${esc(d.text)}</span>`);
+        break;
+      case "pipeline.auction":
+        renderAuction(d.skill, d.quotes, d.winner_peer, d.winner_service);
+        line("warn", `  ⚖ auction · <span class="k">${d.skill}</span> · ${d.quotes.length} bidder${d.quotes.length===1?'':'s'} → winner <span class="v">${d.winner_service}</span>`);
+        break;
+      case "pipeline.consensus":
+        renderConsensus(d);
+        line("warn", `  🗳 consensus · <span class="k">${d.skill}</span> · majority=<span class="v">${d.majority}</span> agreement=${d.agreement}`);
         break;
       case "pipeline.step":
         flashNode(d.skill);
-        line("ok", `  ↳ <span class="k">${d.skill}</span> → <span class="v">${d.svc}</span> @${d.peer}… <span class="t">${d.ms}ms · ${d.cost}¢</span>`);
+        const tag = d.consensus_member ? ' (consensus)' : (d.winner ? '' : ' (loser)');
+        line("ok", `  ↳ <span class="k">${d.skill}${tag}</span> → <span class="v">${d.svc}</span> @${d.peer}… <span class="t">${d.ms}ms · ${d.cost}¢</span>`);
         break;
       case "pipeline.end":
         line("ok", `▸ pipeline.end · plan=<span class="k">${(d.plan||[]).join(',')}</span> · total=<span class="v">${d.total_ms}ms · ${d.total_cost}¢</span> · sentiment=${d.sentiment||'-'} topic=${d.topic||'-'}`);
+        if (d.reputation) renderReputation(d.reputation);
         break;
       default:
         line("", JSON.stringify(d));
@@ -418,6 +555,7 @@ runBtn.onclick = async () => {
 connect();
 // seed fetch in case SSE buffers
 fetch("/api/services").then(r => r.json()).then(d => { renderMesh(d.services); renderCatalogue(d.services); });
+refreshReputation();
 </script>
 </body>
 </html>

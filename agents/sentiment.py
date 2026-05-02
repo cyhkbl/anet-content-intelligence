@@ -18,10 +18,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "sentiment-svc"
+NAME = os.environ.get("SENTIMENT_NAME", "sentiment-svc")
 PORT = int(os.environ.get("SENTIMENT_PORT", "7403"))
 PER_CALL = int(os.environ.get("SENTIMENT_PER_CALL", "5"))
+BASE_ETA_MS = int(os.environ.get("SENTIMENT_BASE_ETA_MS", "50"))
+QUOTE_STYLE = os.environ.get("SENTIMENT_QUOTE_STYLE", "balanced")
 
 POSITIVE = {
     "good", "great", "excellent", "amazing", "love", "happy",
@@ -78,6 +81,15 @@ def meta():
     }
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="sentiment", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/sentiment")
 async def do_sentiment(
     req: Request,
@@ -95,7 +107,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/sentiment", "/health", "/meta"],
+            paths=["/v1/sentiment", "/v1/quote", "/health", "/meta"],
             tags=["sentiment", "content-intel"],
             description="Lexicon-based sentiment classifier",
             per_call=PER_CALL, base_url=base_url,

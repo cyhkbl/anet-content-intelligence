@@ -19,10 +19,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "extract-svc"
+NAME = os.environ.get("EXTRACT_NAME", "extract-svc")
 PORT = int(os.environ.get("EXTRACT_PORT", "7402"))
 PER_CALL = int(os.environ.get("EXTRACT_PER_CALL", "8"))
+BASE_ETA_MS = int(os.environ.get("EXTRACT_BASE_ETA_MS", "70"))
+QUOTE_STYLE = os.environ.get("EXTRACT_QUOTE_STYLE", "thorough")
 
 PLACES = {
     "shanghai", "beijing", "shenzhen", "guangzhou", "hangzhou",
@@ -115,6 +118,15 @@ def meta():
     }
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="extract", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/extract")
 async def do_extract(
     req: Request,
@@ -132,7 +144,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/extract", "/health", "/meta"],
+            paths=["/v1/extract", "/v1/quote", "/health", "/meta"],
             tags=["extract", "ner", "content-intel"],
             description="Regex-based named entity extractor",
             per_call=PER_CALL, base_url=base_url,

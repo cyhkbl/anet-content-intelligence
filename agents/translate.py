@@ -19,10 +19,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "translate-svc"
+NAME = os.environ.get("TRANSLATE_NAME", "translate-svc")
 PORT = int(os.environ.get("TRANSLATE_PORT", "7401"))
 PER_CALL = int(os.environ.get("TRANSLATE_PER_CALL", "5"))
+BASE_ETA_MS = int(os.environ.get("TRANSLATE_BASE_ETA_MS", "40"))
+QUOTE_STYLE = os.environ.get("TRANSLATE_QUOTE_STYLE", "balanced")
 
 TABLE = {
     # places
@@ -87,6 +90,15 @@ def meta():
     return {"name": NAME, "version": "0.1.0", "skill": "translate", "lang": "zh→en"}
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="translate", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/translate")
 async def do_translate(
     req: Request,
@@ -105,7 +117,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/translate", "/health", "/meta"],
+            paths=["/v1/translate", "/v1/quote", "/health", "/meta"],
             tags=["translate", "zh-en", "content-intel"],
             description="Chinese→English rule-based translator",
             per_call=PER_CALL, base_url=base_url,

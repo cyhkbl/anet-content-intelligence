@@ -1,16 +1,21 @@
 # Content Intelligence Mesh · #AgentNetwork
 
-> 🟢 **LIVE on AgentNetwork public mesh** — 9 P2P services + self-composing
-> orchestrator + web dashboard. Every service is discoverable by the skill
-> tag `content-intel`.
+> 🟢 **LIVE on AgentNetwork public mesh** — 10 P2P daemons, 12 services, a
+> self-composing **reverse-auction** orchestrator, consensus voting on
+> high-stakes skills, an evolving reputation ledger, and a web dashboard
+> that visualises every bid as it happens. Every service is discoverable
+> by the skill tag `content-intel`.
 
-A **self-composing** multi-agent P2P service built on **AgentNetwork** that
-turns any blob of text into a complete intelligence report. Instead of a
-hard-coded pipeline, the orchestrator discovers every `content-intel`
-skill on the mesh, picks the ones relevant to the input, chains them
-dynamically, and pays each specialist in shells. Boot a brand-new
-service tomorrow tagged `content-intel` — the orchestrator finds and
-uses it with **zero config change**.
+A **self-composing market** of multi-agent P2P services built on
+**AgentNetwork**. Instead of a hard-coded pipeline, the orchestrator
+discovers every `content-intel` skill on the mesh, runs a **reverse
+auction** across competing providers (price + ETA + reputation), pays the
+winners in shells, and — for skills where correctness matters more than
+cost — runs **consensus voting** across the top-K cheapest bidders.
+
+Boot a competing service tomorrow tagged `content-intel` — it joins the
+next auction with **zero config change**. Underprice the incumbent and
+you start winning.
 
 ```
                         ┌──── client.py OR dashboard (7400) ─────┐
@@ -93,21 +98,35 @@ The dashboard shows:
 
 ## 🧠 What makes this different
 
-1. **Self-composing orchestrator.** Every `/v1/analyze` call re-discovers
-   the mesh. The execution plan is a pure function of
-   `(input features, available skills)`. Add a service → it joins the
-   pipeline automatically. Kill a service → the plan gracefully skips it.
-2. **Zero hard-coded peers.** No URL, no port, no DID is baked in.
+1. **Reverse-auction marketplace.** Every `/v1/analyze` runs a sealed-bid
+   auction *per skill*: every peer offering that skill is asked for a
+   `/v1/quote` (bid + ETA + self-reported load); the orchestrator scores
+   `bid + eta_ms/20 - reputation_bonus` and dispatches to the winner.
+   Add a cheaper provider — it wins next time. Lower your latency — same.
+2. **Consensus voting for high-stakes skills.** `sentiment` is a
+   classification, not a calculation: it benefits from a quorum. The
+   orchestrator polls the top-K cheapest bidders in parallel and returns
+   the majority label, paying every consulted provider. Toggle the
+   feature with `consensus=true|false` in the analyze body.
+3. **Persistent reputation ledger.** Each successful call earns the
+   provider +1, each failure −2; reputation gives a small scoring bonus
+   on the next auction so reliable peers slowly win more market share.
+   Surface it live at `GET /v1/marketplace`.
+4. **Self-composing orchestrator.** Every `/v1/analyze` re-discovers the
+   mesh. The plan is a pure function of `(input features, available
+   skills)`. Add a service → it joins next request. Kill one → the plan
+   skips it.
+5. **Zero hard-coded peers.** No URL, no port, no DID is baked in.
    Every cross-agent hop resolves through `svc.discover(skill=...)`.
-3. **Nine independent daemons.** Each agent has its own libp2p identity,
-   P2P port, REST port, and shell ledger — simulating nine organisations
-   collaborating over an open mesh.
-4. **A real cost model.** Free vs priced services live side-by-side;
-   cross-node credit seeding is part of the demo so the audit trail shows
-   non-zero shell spend per run.
-5. **Live observability.** The dashboard streams SSE events the moment
-   the orchestrator starts a run, renders every P2P hop on an animated
-   graph, and surfaces the full ANS catalogue.
+6. **Ten independent daemons (12 services).** Each agent has its own
+   libp2p identity, P2P port, REST port, and shell ledger — simulating
+   competing organisations bidding for work over an open mesh. The 10th
+   daemon hosts **alt providers** (`sentiment-alt`, `classify-alt`,
+   `keywords-alt`) with different price/style profiles that compete with
+   the incumbents.
+7. **Live observability.** The dashboard streams SSE events the moment
+   an auction opens, animates every bid, and shows reputation accruing
+   in real time.
 
 ## 📦 What each agent does
 
@@ -122,7 +141,10 @@ The dashboard shows:
 | `factcheck-svc`        | u7 14107 | 7407 | `factcheck`         | 8 ¢   | plausibility rules for %, years, orgs      |
 | `translate-en-zh-svc`  | u8 14108 | 7408 | `translate-en-zh`   | 5 ¢   | longest-match en→zh dictionary             |
 | `keywords-svc`         | u9 14109 | 7409 | `keywords`          | 3 ¢   | TF + length-boost + stopword filter        |
-| `dashboard-svc`        | reuses u1 | 7400 | (web UI, not ANS)  | —     | FastAPI + SSE · animated topology + logs   |
+| `sentiment-alt-svc`    | u10 14110 | 7413 | `sentiment`         | 2 ¢   | cheap-style alt — competes in auction       |
+| `classify-alt-svc`     | u10 14110 | 7415 | `classify`          | 4 ¢   | fast-style alt — competes on ETA            |
+| `keywords-alt-svc`     | u10 14110 | 7419 | `keywords`          | 2 ¢   | thorough-style alt — competes on quality    |
+| `dashboard-svc`        | reuses u1 | 7400 | (web UI, not ANS)  | —     | FastAPI + SSE · animated topology + bids   |
 
 ## 🏗 How it works (the interesting bits)
 

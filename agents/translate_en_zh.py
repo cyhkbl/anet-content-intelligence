@@ -20,10 +20,13 @@ from fastapi.responses import JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from register import register_until_ready  # noqa: E402
+from quote_helpers import make_quote  # noqa: E402
 
-NAME = "translate-en-zh-svc"
+NAME = os.environ.get("TRANSLATE_EN_ZH_NAME", "translate-en-zh-svc")
 PORT = int(os.environ.get("TRANSLATE_EN_ZH_PORT", "7408"))
 PER_CALL = int(os.environ.get("TRANSLATE_EN_ZH_PER_CALL", "5"))
+BASE_ETA_MS = int(os.environ.get("TRANSLATE_EN_ZH_BASE_ETA_MS", "45"))
+QUOTE_STYLE = os.environ.get("TRANSLATE_EN_ZH_QUOTE_STYLE", "balanced")
 
 # Reverse of translate.py's TABLE, with a few extras tuned for headlines.
 TABLE_PHRASES = [
@@ -112,6 +115,15 @@ def meta():
     return {"name": NAME, "version": "0.1.0", "skill": "translate-en-zh", "lang": "en→zh"}
 
 
+@app.post("/v1/quote")
+async def do_quote(req: Request):
+    body = await req.json() or {}
+    return JSONResponse(make_quote(
+        text=body.get("text") or "", skill="translate-en-zh", agent=NAME,
+        base_cost=PER_CALL, base_eta_ms=BASE_ETA_MS, style=QUOTE_STYLE,
+    ))
+
+
 @app.post("/v1/translate-en-zh")
 async def do_translate(
     req: Request,
@@ -132,7 +144,7 @@ def main() -> None:
     threading.Thread(
         target=lambda: register_until_ready(
             NAME, PORT,
-            paths=["/v1/translate-en-zh", "/health", "/meta"],
+            paths=["/v1/translate-en-zh", "/v1/quote", "/health", "/meta"],
             tags=["translate-en-zh", "en-zh", "content-intel"],
             description="English→Chinese rule-based translator",
             per_call=PER_CALL, base_url=base_url,

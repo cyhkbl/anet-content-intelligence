@@ -34,11 +34,35 @@ start_agent /tmp/anet-ci-u7 14107 7407 agents.factcheck        "factcheck-svc   
 start_agent /tmp/anet-ci-u8 14108 7408 agents.translate_en_zh  "translate-en-zh-svc "
 start_agent /tmp/anet-ci-u9 14109 7409 agents.keywords         "keywords-svc        "
 
+# ── alt providers on u10 (auction competitors) ──────────────────────────
+# Same skill tags, different (NAME, port, cost, style). Orchestrator runs a
+# reverse-auction across providers offering the same skill.
+start_alt() {
+  local home="$1" api="$2" port="$3" module="$4" name="$5"
+  shift 5
+  local logfile="$home/agent-${port}.log"
+  HOME="$home" \
+    ANET_BASE_URL="http://127.0.0.1:$api" \
+    ANET_TOKEN="$(tr -d '[:space:]' < "$home/.anet/api_token")" \
+    "$@" \
+    "$PY" -m "$module" > "$logfile" 2>&1 &
+  echo $! >> "$PIDFILE"
+  yellow "$name → :$port  (HOME=$home, log=$logfile)"
+}
+
+# `env -S` lets us inject the per-alt overrides as one argv element.
+start_alt /tmp/anet-ci-u10 14110 7413 agents.sentiment "sentiment-alt-svc   " \
+  env SENTIMENT_NAME=sentiment-alt-svc SENTIMENT_PORT=7413 SENTIMENT_PER_CALL=2 SENTIMENT_QUOTE_STYLE=cheap SENTIMENT_BASE_ETA_MS=120
+start_alt /tmp/anet-ci-u10 14110 7415 agents.classify "classify-alt-svc    " \
+  env CLASSIFY_NAME=classify-alt-svc CLASSIFY_PORT=7415 CLASSIFY_PER_CALL=4 CLASSIFY_QUOTE_STYLE=fast CLASSIFY_BASE_ETA_MS=35
+start_alt /tmp/anet-ci-u10 14110 7419 agents.keywords "keywords-alt-svc    " \
+  env KEYWORDS_NAME=keywords-alt-svc KEYWORDS_PORT=7419 KEYWORDS_PER_CALL=2 KEYWORDS_QUOTE_STYLE=thorough KEYWORDS_BASE_ETA_MS=110
+
 # Dashboard — not a P2P service, just observes. Points at u1's daemon to discover.
 start_agent /tmp/anet-ci-u1 14101 7400 agents.dashboard        "dashboard-svc       "
 
 # Wait for each FastAPI backend's /health to come up.
-for port in 7401 7402 7403 7404 7405 7406 7407 7408 7409 7400; do
+for port in 7401 7402 7403 7404 7405 7406 7407 7408 7409 7413 7415 7419 7400; do
   for _ in $(seq 1 40); do
     curl -sf -m 1 "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
     sleep 0.5

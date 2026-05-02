@@ -58,6 +58,8 @@ SKILL_KNOWN = [
     "sentiment", "summarise", "classify", "factcheck", "orchestrator",
 ]
 
+DAEMON_HOMES.append(("u10 alt-providers", "http://127.0.0.1:14110", "/tmp/anet-ci-u10"))
+
 app = FastAPI(title=NAME)
 
 # In-process broadcast bus for SSE subscribers.
@@ -145,7 +147,7 @@ async def _call_orchestrator(text: str, intent: str) -> dict:
             resp = svc.call(
                 target["peer_id"], target["services"][0]["name"],
                 "/v1/analyze", method="POST",
-                body={"text": text, "intent": intent},
+                body={"text": text, "intent": intent, "consensus": True},
             )
             body = resp.get("body") or {}
             return body if isinstance(body, dict) else {"body": body}
@@ -213,6 +215,16 @@ async def api_analyze(req: Request):
     _broadcast({"type": "pipeline.start", "text": text[:120], "intent": intent})
     result = await _call_orchestrator(text, intent)
 
+    # Broadcast each auction so the UI can render the bid table.
+    for auction in result.get("auctions") or []:
+        _broadcast({
+            "type": "pipeline.auction",
+            "skill": auction.get("skill"),
+            "quotes": auction.get("quotes") or [],
+            "winner_peer": (auction.get("winner_peer") or "")[:18],
+            "winner_service": auction.get("winner_service"),
+        })
+
     # Re-broadcast each step as its own event so the UI can animate them.
     for step in result.get("pipeline") or []:
         _broadcast({
@@ -222,6 +234,18 @@ async def api_analyze(req: Request):
             "peer": step.get("peer"),
             "ms": step.get("ms"),
             "cost": step.get("cost", 0),
+            "winner": step.get("winner", True),
+            "consensus_member": step.get("consensus_member", False),
+        })
+
+    for cr in result.get("consensus_reports") or []:
+        _broadcast({
+            "type": "pipeline.consensus",
+            "skill": cr.get("skill"),
+            "tally": cr.get("tally"),
+            "majority": cr.get("majority"),
+            "agreement": cr.get("agreement"),
+            "votes": cr.get("votes"),
         })
     _broadcast({
         "type": "pipeline.end",
@@ -230,8 +254,33 @@ async def api_analyze(req: Request):
         "total_cost": result.get("total_cost"),
         "topic": result.get("topic"),
         "sentiment": (result.get("sentiment") or {}).get("label"),
+        "reputation": result.get("reputation_top") or [],
     })
     return JSONResponse(result)
+
+
+@app.get("/api/marketplace")
+async def api_marketplace():
+    """Proxy the orchestrator's /v1/marketplace via P2P."""
+    loop = asyncio.get_event_loop()
+
+    def _sync() -> dict:
+        with SvcClient(base_url=ANET_BASE_URL) as svc:
+            peers = svc.discover(skill="orchestrator")
+            for p in peers:
+                for s in p.get("services") or []:
+                    for path in s.get("paths") or []:
+                        prefix = path.get("prefix") if isinstance(path, dict) else str(path)
+                        if prefix and "/v1/marketplace".startswith(prefix):
+                            resp = svc.call(
+                                p["peer_id"], s["name"],
+                                "/v1/marketplace", method="GET", body=None,
+                            )
+                            body = resp.get("body") or {}
+                            return body if isinstance(body, dict) else {"body": body}
+            return {"reputation": [], "note": "no orchestrator with /v1/marketplace yet"}
+
+    return JSONResponse(await loop.run_in_executor(None, _sync))
 
 
 async def _watch_mesh(stop: asyncio.Event) -> None:

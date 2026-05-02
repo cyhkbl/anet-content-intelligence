@@ -12,18 +12,20 @@
 #   /tmp/anet-ci-u7   API=:14107  P2P=:14207   (factcheck-svc)
 #   /tmp/anet-ci-u8   API=:14108  P2P=:14208   (translate-en-zh-svc)
 #   /tmp/anet-ci-u9   API=:14109  P2P=:14209   (keywords-svc)
+#   /tmp/anet-ci-u10  API=:14110  P2P=:14210   (alt providers — auction competitors)
 #
-# Daemons 2-9 bootstrap off daemon-1 to form one mesh.
+# Daemons 2-10 bootstrap off daemon-1 to form one mesh.
 
 set -euo pipefail
 ANET="${ANET:-anet}"
 
-API=(14101 14102 14103 14104 14105 14106 14107 14108 14109)
-P2P=(14201 14202 14203 14204 14205 14206 14207 14208 14209)
+API=(14101 14102 14103 14104 14105 14106 14107 14108 14109 14110)
+P2P=(14201 14202 14203 14204 14205 14206 14207 14208 14209 14210)
 HOMES=(
   /tmp/anet-ci-u1 /tmp/anet-ci-u2 /tmp/anet-ci-u3
   /tmp/anet-ci-u4 /tmp/anet-ci-u5 /tmp/anet-ci-u6
   /tmp/anet-ci-u7 /tmp/anet-ci-u8 /tmp/anet-ci-u9
+  /tmp/anet-ci-u10
 )
 N=${#HOMES[@]}
 
@@ -128,13 +130,14 @@ Daemon URLs:
   u7 factcheck         http://127.0.0.1:${API[6]}   HOME=${HOMES[6]}
   u8 translate-en-zh   http://127.0.0.1:${API[7]}   HOME=${HOMES[7]}
   u9 keywords          http://127.0.0.1:${API[8]}   HOME=${HOMES[8]}
+  u10 alt-providers    http://127.0.0.1:${API[9]}   HOME=${HOMES[9]}
 
 Next: bash scripts/run-all.sh    # start the 9 agents + dashboard
 EOF
 }
 
 cmd_stop() {
-  for p in "${API[@]}" "${P2P[@]}" 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409; do
+  for p in "${API[@]}" "${P2P[@]}" 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 7413 7415 7419; do
     lsof -ti tcp:"$p" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   done
   pkill -f "anet daemon" 2>/dev/null || true
