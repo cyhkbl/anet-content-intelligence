@@ -1,232 +1,226 @@
-# Content Intelligence Mesh · #AgentNetwork
+# Shell Market Protocol · #AgentNetwork
 
-> 🟢 **LIVE on AgentNetwork public mesh** — 10 P2P daemons, 12 services, a
-> self-composing **reverse-auction** orchestrator, consensus voting on
-> high-stakes skills, an evolving reputation ledger, and a web dashboard
-> that visualises every bid as it happens. Every service is discoverable
-> by the skill tag `content-intel`.
+> 🟢 **The first service-trading protocol for AgentNetwork.** A standalone
+> P2P protocol layer — `auction-svc` + `reputation-svc` + `market-dashboard-svc` —
+> that any provider on the mesh can plug into. Bring your own skill, expose
+> `/v1/quote`, and you join a live, sealed reverse-auction marketplace
+> with on-chain-style reputation. **13 daemons, 16 services, 0 configuration.**
 
-A **self-composing market** of multi-agent P2P services built on
-**AgentNetwork**. Instead of a hard-coded pipeline, the orchestrator
-discovers every `content-intel` skill on the mesh, runs a **reverse
-auction** across competing providers (price + ETA + reputation), pays the
-winners in shells, and — for skills where correctness matters more than
-cost — runs **consensus voting** across the top-K cheapest bidders.
+**Shell Market Protocol** is *not* an NLP product. It's a
+**protocol layer for AgentNetwork** that turns P2P services into a
+liquid market. Every call is a sealed reverse auction; every outcome
+updates a public reputation registry; every bid is observable from a
+mesh-wide dashboard.
 
-Boot a competing service tomorrow tagged `content-intel` — it joins the
-next auction with **zero config change**. Underprice the incumbent and
-you start winning.
+The included content-intelligence pipeline — translate, extract, keywords,
+sentiment, summarise, classify, factcheck — is a **reference implementation**
+showing how 9 distinct providers on 10 daemons compete inside the protocol
+on price, latency, and reputation. Swap them out for any skill. The
+protocol stays the same.
 
 ```
-                        ┌──── client.py OR dashboard (7400) ─────┐
-                        │                 (any daemon)            │
-                        └────────────────────┬───────────────────┘
-                                             ▼  P2P /v1/analyze
-                                 ┌───────────────────────┐
-                                 │   orchestrator-svc    │  (u6 :14106)
-                                 │  self-composes plan   │
-                                 │  from ANS discovery   │
-                                 └──┬──┬──┬──┬──┬──┬──┬──┘
-          discover by skill tag     │  │  │  │  │  │  │
-                                    ▼  ▼  ▼  ▼  ▼  ▼  ▼
-      translate    extract    keywords   sentiment   summarise   classify   factcheck
-        (u1)         (u2)       (u9)        (u3)        (u4)       (u5)       (u7)
-          │                                                 │
-          ▲───────────── cross-call when input is zh ───────┘
-                           (summarise → translate)
-                                                                translate-en-zh (u8)
+                ┌──── any caller (client / orchestrator / agent) ────┐
+                └─────────────────���──┬───────────────────────────────┘
+                                     │
+                              POST /v1/open   ──┐
+                                                ▼
+                          ┌──────────────────────────────┐
+                          │       auction-svc  (u12)     │  Shell Market
+                          │   sealed reverse auctions    │   Protocol
+                          └──┬─────────────────┬─────────┘
+                             │                 │
+                  POST /v1/bid                 │ POST /v1/report
+                  (every bidder)               ▼
+                             │           ┌────────────────────┐
+                             ▼           │ reputation-svc(u11)│  Shell Market
+                  ┌──────────────────┐   │ trust ledger       │   Protocol
+                  │  any provider    │←──┤ score = wins-2*L   │
+                  │  /v1/quote       │   └─────────┬──────────┘
+                  └──────────────────┘             │
+                                                   │ live read
+                                                   ▼
+                                       ┌─────────────────────┐
+                                       │ market-dashboard(u13)│  Shell Market
+                                       │ http://...:7422     │   Protocol
+                                       └─────────────────────┘
 ```
 
-## ⚡ Why AgentNetwork — why this couldn't be MCP or A2A
+## 🟢 Why this is a protocol, not a product
 
-| Feature                              | MCP | A2A | Static pipeline |  **AgentNetwork**  |
-|--------------------------------------|:--:|:---:|:---------------:|:------------------:|
-| Tools served over **P2P**            | ❌ | ❌  | ❌               | ✅                 |
-| **Skill-tag discovery** (no URLs)    | ❌ | ⚠  | ❌               | ✅ (ANS)           |
-| **Pay-per-call** shell economy       | ❌ | ❌  | ❌               | ✅                 |
-| **Self-composing** at run-time       | ❌ | ⚠  | ❌               | ✅                 |
-| Cross-trust audit log                | ❌ | ❌  | ❌               | ✅ (`svc_call_log`) |
-| Join a strangers' service seamlessly | ❌ | ❌  | ❌               | ✅                 |
+| Layer                         | Example                          | Pluggable? |
+| :---------------------------- | :------------------------------- | :--------: |
+| **Protocol services**         | auction-svc, reputation-svc      | ✓ (this repo) |
+| **Provider contract**         | `/v1/quote` returns a sealed bid | ✓ (any agent) |
+| **Auctioneer / orchestrator** | this repo's `orchestrator-svc`   | ✓ (DIY)    |
+| **Skill implementation**      | translate, sentiment, keywords…  | ✓ (yours)  |
+| **Discovery + audit + pay**   | AgentNetwork (ANS, shells, log)  | already there |
 
-In short: **MCP gives a single agent its tools. AgentNetwork lets agents
-become each other's tools.** The orchestrator here isn't a client of fixed
-dependencies — it's a market-maker for any skill the mesh offers.
+A new provider joins by:
+1. Registering a service with tag `content-intel` (or any skill tag).
+2. Exposing `POST /v1/quote` returning `{bid, eta_ms, style, load}`.
+3. Exposing the actual skill endpoint (e.g. `POST /v1/sentiment`).
 
-## 🚀 5-minute quickstart (for the judges)
+The orchestrator finds them on the next auction. **Zero coordination.**
+**Zero config in this repo.** The protocol does the rest.
+
+## ⚡ 5-minute judges' guide
 
 ```bash
-# 0. Prerequisites:  uv  +  the anet daemon CLI on $PATH
-which anet                  # → /usr/local/bin/anet (or similar)
-
-# 1. Install python deps into a fresh venv (≈ 15 s)
-rm -rf .venv && uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python httpx fastapi uvicorn python-dotenv
-
-# 2. One-shot end-to-end: 9 daemons → seed credits → 9 agents + dashboard → demo
-bash scripts/run.sh
-
-# 3. Open the live dashboard in your browser
-#    → http://127.0.0.1:7400
-#    (watch the mesh animate as the orchestrator discovers peers + fires calls)
-
-# 4. (Optional) Try a different prompt from the CLI
-.venv/bin/python client.py "Tesla stock fell 5% after the CEO announced layoffs."
-.venv/bin/python client.py "上海明天天气怎么样？"            # Chinese — triggers translate hop
-.venv/bin/python client.py "Revenue grew 9999% overnight." # triggers factcheck flag
-
-# 5. Tear it all down
-bash scripts/stop.sh
+git clone …; cd anet-hackathon
+python3.11 -m venv .venv && .venv/bin/pip install -e .
+bash scripts/run.sh                     # 13 daemons + 16 services + demo client
+open http://127.0.0.1:7422              # Shell Market Protocol dashboard
 ```
 
-The terminal client prints:
-```
-📊  CONTENT INTELLIGENCE REPORT  ·  self-composing orchestrator
-🔎  Services discovered on the content-intel mesh:  (8 services)
-🧠  Orchestrator plan: translate → extract → keywords → sentiment → summarise → classify → factcheck
-🔗  Pipeline call chain: ASCII graph with latency + shell cost per hop
-📝  Results: summary / sentiment / topic / entities / keywords / factcheck verdict
-💰  Shell economy: total spend + per-skill breakdown
-📜  Per-daemon svc_call_log + balance
-```
-Total wall-clock from `run.sh` start to client output: **< 60 s on a laptop.**
+You should see:
 
-The dashboard shows:
-* every discovered P2P service as a live node
-* animated edges as the orchestrator calls each hop
-* real-time stream of mesh changes via SSE
-* preset prompts, custom text, bilingual intent toggle
+- **A reputation leaderboard** that updates after every call.
+- **A live auction tape** — recent auctions per skill, every bid, the winner.
+- **The orchestrator output** — full pipeline report with `auctions[].via_protocol: true`,
+  proving each step was settled through the protocol services.
+- **`bash scripts/setup-nodes.sh status`** showing 13 daemons green.
 
-## 🧠 What makes this different
+## 📜 The protocol surface
 
-1. **Reverse-auction marketplace.** Every `/v1/analyze` runs a sealed-bid
-   auction *per skill*: every peer offering that skill is asked for a
-   `/v1/quote` (bid + ETA + self-reported load); the orchestrator scores
-   `bid + eta_ms/20 - reputation_bonus` and dispatches to the winner.
-   Add a cheaper provider — it wins next time. Lower your latency — same.
-2. **Consensus voting for high-stakes skills.** `sentiment` is a
-   classification, not a calculation: it benefits from a quorum. The
-   orchestrator polls the top-K cheapest bidders in parallel and returns
-   the majority label, paying every consulted provider. Toggle the
-   feature with `consensus=true|false` in the analyze body.
-3. **Persistent reputation ledger.** Each successful call earns the
-   provider +1, each failure −2; reputation gives a small scoring bonus
-   on the next auction so reliable peers slowly win more market share.
-   Surface it live at `GET /v1/marketplace`.
-4. **Self-composing orchestrator.** Every `/v1/analyze` re-discovers the
-   mesh. The plan is a pure function of `(input features, available
-   skills)`. Add a service → it joins next request. Kill one → the plan
-   skips it.
-5. **Zero hard-coded peers.** No URL, no port, no DID is baked in.
-   Every cross-agent hop resolves through `svc.discover(skill=...)`.
-6. **Ten independent daemons (12 services).** Each agent has its own
-   libp2p identity, P2P port, REST port, and shell ledger — simulating
-   competing organisations bidding for work over an open mesh. The 10th
-   daemon hosts **alt providers** (`sentiment-alt`, `classify-alt`,
-   `keywords-alt`) with different price/style profiles that compete with
-   the incumbents.
-7. **Live observability.** The dashboard streams SSE events the moment
-   an auction opens, animates every bid, and shows reputation accruing
-   in real time.
-
-## 📦 What each agent does
-
-| Agent                  | Daemon   | HTTP | Skill tag           | Cost  | Trick                                     |
-|------------------------|----------|------|---------------------|-------|-------------------------------------------|
-| `translate-svc`        | u1 14101 | 7401 | `translate`         | 5 ¢   | longest-match zh→en dictionary             |
-| `extract-svc`          | u2 14102 | 7402 | `extract`           | 8 ¢   | regex + lexicon NER (PERSON/ORG/…)         |
-| `sentiment-svc`        | u3 14103 | 7403 | `sentiment`         | 5 ¢   | lexicon w/ intensifier-aware scoring       |
-| `summarise-svc`        | u4 14104 | 7404 | `summarise`         | 10 ¢  | extractive; **calls translate** for zh     |
-| `classify-svc`         | u5 14105 | 7405 | `classify`          | 5 ¢   | keyword voting across 7 topics             |
-| `orchestrator-svc`     | u6 14106 | 7406 | `orchestrator`      | free  | self-composes pipeline from ANS discovery  |
-| `factcheck-svc`        | u7 14107 | 7407 | `factcheck`         | 8 ¢   | plausibility rules for %, years, orgs      |
-| `translate-en-zh-svc`  | u8 14108 | 7408 | `translate-en-zh`   | 5 ¢   | longest-match en→zh dictionary             |
-| `keywords-svc`         | u9 14109 | 7409 | `keywords`          | 3 ¢   | TF + length-boost + stopword filter        |
-| `sentiment-alt-svc`    | u10 14110 | 7413 | `sentiment`         | 2 ¢   | cheap-style alt — competes in auction       |
-| `classify-alt-svc`     | u10 14110 | 7415 | `classify`          | 4 ¢   | fast-style alt — competes on ETA            |
-| `keywords-alt-svc`     | u10 14110 | 7419 | `keywords`          | 2 ¢   | thorough-style alt — competes on quality    |
-| `dashboard-svc`        | reuses u1 | 7400 | (web UI, not ANS)  | —     | FastAPI + SSE · animated topology + bids   |
-
-## 🏗 How it works (the interesting bits)
-
-1. **Nine independent daemons.** `scripts/setup-nodes.sh` boots nine libp2p
-   daemons — each with its own `HOME`, P2P port, REST port, identity, and
-   credit ledger. Daemons 2-9 bootstrap off daemon-1 to form a single mesh.
-2. **Cross-node credit seeding.** Provider ledgers don't know about caller
-   DIDs until they receive a credit event. The setup script seeds 72 mutual
-   transfers (500 shells each) so any of the nine daemons can charge any
-   other without 402s.
-3. **Service registration.** Each agent's FastAPI backend exposes `/v1/…`,
-   `/health`, `/meta`. On startup, `agents/register.py` waits for `/health`
-   to respond, then POSTs `/api/svc/register` with skill tags + cost model.
-4. **Skill-based discovery.** The orchestrator **never** hardcodes a peer
-   URL. For each leg, it calls `svc.discover(skill="<tag>")`, picks the
-   first responder, then `svc.call(peer_id, svc_name, "/v1/<endpoint>", …)`.
-5. **Dynamic plan.** Input features → plan:
-   * Chinese text? → prepend `translate`
-   * Numbers/dates/percentages? → append `factcheck`
-   * `intent=translate-to-zh`? → append `translate-en-zh`
-   * Always include whichever signal-gathering skills are live
-6. **Cross-agent hop.** `summarise-svc` discovers `translate` itself when
-   input is Chinese — a sub-pipeline built mid-flight.
-7. **Audit trail.** Every P2P call is logged in `svc_call_log` on both the
-   caller's and provider's daemons. `client.py` queries each daemon's
-   `/api/svc/audit` after the run and surfaces a reconciliation-friendly
-   summary alongside shell balances.
-
-## 🎛 Project layout
+### `auction-svc` — sealed reverse auction coordinator
 
 ```
-anet-hackathon/
-├── README.md                ← this file
-├── CLAUDE.md / SPEC.md      ← design notes
-├── IMPROVE.md               ← upgrade plan (this iteration)
-├── pyproject.toml
-├── client.py                ← CLI: discover orchestrator → /v1/analyze → pretty report
-├── static/
-│   └── index.html           ← terminal-style web dashboard (no build step)
+POST /v1/open       {skill, text, k=1}                  → {auction_id, ...}
+POST /v1/bid        {auction_id, peer_id, service,
+                     bid, eta_ms, style, load}           → {accepted}
+POST /v1/close/{id}                                      → {winners, all_bids, ...}
+GET  /v1/active                                          → list
+GET  /v1/history?limit=20                                → recent closed auctions
+```
+
+Scoring (lower wins):
+```
+score = bid + eta_ms / 20 - reputation_bonus
+```
+Ties broken by lower latency, then earliest bid.
+
+### `reputation-svc` — global trust registry
+
+```
+POST /v1/report     {peer_id, service, success}          → record one outcome
+GET  /v1/lookup?service=&peer_id=                        → record
+GET  /v1/leaderboard?limit=20                            → ranked list
+GET  /v1/bonus?service=&peer_id=                         → score discount
+GET  /v1/stats                                           → totals + uptime
+```
+
+Bonus = `clamp(score * 0.25, -3, +4)`. A winner earns +1, a failure -2 —
+failures hurt more, classic trust dynamics.
+
+### `market-dashboard-svc` — live UI
+
+P2P-discovered web UI. Reads from `auction-svc` and `reputation-svc` only.
+**It doesn't know any skills exist.**
+
+## 🛠 Reference implementation: a 9-skill content-intelligence mesh
+
+| Daemon | Service                | Skill tag        | Per-call (shells) |
+| :----- | :--------------------- | :--------------- | :---------------: |
+| u1     | translate-svc          | translate        | 0 (free)          |
+| u2     | extract-svc            | extract          | 5                 |
+| u3     | sentiment-svc          | sentiment        | 5                 |
+| u4     | summarise-svc          | summarise        | 5                 |
+| u5     | classify-svc           | classify         | 5                 |
+| u6     | orchestrator-svc       | orchestrator     | 0 (free)          |
+| u7     | factcheck-svc          | factcheck        | 8                 |
+| u8     | translate-en-zh-svc    | translate-en-zh  | 4                 |
+| u9     | keywords-svc           | keywords         | 3                 |
+| u10    | sentiment-alt-svc      | sentiment        | 2 (cheaper, slower) |
+| u10    | classify-alt-svc       | classify         | 4 (faster)        |
+| u10    | keywords-alt-svc       | keywords         | 2 (thorough)      |
+| **u11**| **reputation-svc**     | **reputation**   | **0 — protocol**  |
+| **u12**| **auction-svc**        | **auction**      | **0 — protocol**  |
+| **u13**| **market-dashboard**   | **market-dashboard** | **0 — protocol** |
+
+Three skills (`sentiment`, `classify`, `keywords`) have **competing providers**
+on different daemons with different cost/latency/style profiles. Watch the
+auction tape — bids change every run as the per-process load random-walks,
+and reputation slowly tilts the playing field.
+
+## 🔁 Anatomy of one orchestrator call
+
+For each step in the plan the orchestrator runs through the protocol:
+
+```
+1. open    auction-svc.POST /v1/open       {skill, text, k}        → auction_id
+2. quote   for each provider:  POST /v1/quote                       → bid
+3. bid     auction-svc.POST /v1/bid        × N
+4. close   auction-svc.POST /v1/close/{id}                          → winners (rep bonus applied)
+5. work    winner.POST /v1/{skill}                                  → result
+6. report  reputation-svc.POST /v1/report  {peer_id, service, ok}   → ledger ++
+```
+
+If `auction-svc` is unreachable the orchestrator gracefully degrades to
+local scoring. **Protocol services compose; they don't dominate.**
+
+## 🧠 Consensus is a protocol primitive too
+
+For high-stakes skills (default: `sentiment`) the orchestrator opens the
+auction with `k=2`, asks the protocol for the top 2 winners, calls both,
+and majority-votes the labels. Reputation is reported for **every**
+provider that participated — losers in the vote still get a score
+adjustment based on whether they returned successfully.
+
+## 📁 Repo layout
+
+```
+~/anet-hackathon/
+├── README.md            ← this doc (protocol spec + quickstart)
+├── WIN.md               ← the strategy that drove this rewrite
+├── pyproject.toml       ← Python deps
+├── client.py            ← demo client (calls orchestrator)
 ├── agents/
-│   ├── anet_sdk.py          ← minimal SvcClient shim around /api/svc/*
-│   ├── register.py          ← shared "wait healthy → register" helper
-│   ├── translate.py         (port 7401, skill=translate)
-│   ├── extract.py           (port 7402, skill=extract)
-│   ├── sentiment.py         (port 7403, skill=sentiment)
-│   ├── summarise.py         (port 7404, skill=summarise — calls translate)
-│   ├── classify.py          (port 7405, skill=classify)
-│   ├── orchestrator.py      (port 7406, skill=orchestrator — self-composes)
-│   ├── factcheck.py         (port 7407, skill=factcheck)       🆕
-│   ├── translate_en_zh.py   (port 7408, skill=translate-en-zh) 🆕
-│   ├── keywords.py          (port 7409, skill=keywords)        🆕
-│   └── dashboard.py         (port 7400, SSE + static HTML)     🆕
+│   ├── reputation.py        ← Shell Market Protocol :7420
+│   ├── auction.py           ← Shell Market Protocol :7421
+│   ├── market_dashboard.py  ← Shell Market Protocol :7422
+│   ├── orchestrator.py      ← protocol client (auctioneer for content-intel)
+│   ├── translate.py / extract.py / keywords.py / sentiment.py
+│   ├── summarise.py / classify.py / factcheck.py / translate_en_zh.py
+│   ├── dashboard.py         ← legacy pipeline observer (still works) :7400
+│   ├── quote_helpers.py     ← reusable /v1/quote helper
+│   ├── register.py          ← anet registration helper
+│   └── anet_sdk.py          ← daemon REST shim
 ├── scripts/
-│   ├── setup-nodes.sh       ← 9 daemons + cross-node credit seeding
-│   ├── run-all.sh           ← 9 agents + dashboard as background procs
-│   ├── run.sh               ← one-shot end-to-end (setup + run + client)
-│   └── stop.sh              ← kill everything
+│   ├── setup-nodes.sh       ← 13 daemons + cross-node credit seeding
+│   ├── run-all.sh           ← starts every FastAPI service
+│   ├── run.sh               ← one-shot end-to-end demo
+│   └── stop.sh              ← clean teardown
 └── tests/
-    └── test_pipeline.py     ← smoke test the agents' pure functions
+    └── test_pipeline.py     ← integration test
 ```
 
-## 🌐 Public Network Registration
+## 🌐 Build on the protocol
 
-Services are registered on the public AgentNetwork mesh. Anyone can
-discover and call them from any anet daemon:
+Want to add a new skill — say, **`code-review`** — that participates in the
+market? You write **one file**:
+
+```python
+# agents/codereview.py
+@app.post("/v1/quote")
+def quote(req): return make_quote(text=..., skill="code-review",
+                                  agent="codereview-svc",
+                                  base_cost=12, base_eta_ms=300)
+
+@app.post("/v1/codereview")
+def review(req): ... return {"verdict": ..., "agent": "codereview-svc"}
+```
+
+…register it with tag `code-review` and `content-intel`. The planner here
+is content-intel-specific, but **any auctioneer that opens a `code-review`
+auction will discover and score your provider through the same protocol
+services**. That is what makes this a protocol layer, not a pipeline.
+
+## 📋 Cleanup
 
 ```bash
-# Discover everything tagged content-intel
-anet svc discover --skill content-intel
-
-# Ask the orchestrator to analyze text — it will auto-compose the pipeline
-anet svc call <peer_id> orchestrator-svc /v1/analyze --method POST \
-  --body '{"text":"Your text here"}'
+bash scripts/stop.sh          # kills all 13 daemons + every FastAPI agent
 ```
 
-## 🧪 Tests
+## 🏷 Tag
 
-```bash
-.venv/bin/python -m pytest tests/    # pure-function smoke tests
-```
-
-The integration test exercises the agent logic in isolation (no daemon
-needed). The `scripts/run.sh` entry point is the de-facto end-to-end test.
-
-#AgentNetwork
+`#AgentNetwork` `#ShellMarketProtocol` `#P2P` `#Auction` `#Reputation`

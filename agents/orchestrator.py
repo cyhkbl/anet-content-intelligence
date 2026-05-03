@@ -1,29 +1,30 @@
-"""orchestrator-svc — self-composing market-maker over the content-intel mesh.
+"""orchestrator-svc — pipeline composer over the Shell Market Protocol.
 
-Exposes:
-  POST /v1/analyze     {text, intent?, consensus?}  → full report
-  GET  /v1/discover                                  → live mesh catalogue
-  GET  /v1/marketplace                               → reputation + win counts
+This orchestrator does not run its own auction or reputation ledger. It is a
+*client* of the Shell Market Protocol services on the mesh:
 
-The orchestrator does not know which specialists exist. On every request it:
+  - auction-svc      runs sealed reverse auctions and picks winners
+  - reputation-svc   tracks per-(peer, service) trust over time
 
-  1. Discovers every peer offering each known content-intel skill.
-  2. For each step in the plan, asks **every** competing peer for a /v1/quote
-     bid (price + ETA + self-reported load).
-  3. Scores bids by   `bid + eta_ms/20  -  reputation_bonus`   and picks the
-     cheapest qualified provider — a reverse auction.
-  4. For high-stakes skills (sentiment by default) it can run **consensus**:
-     query the top-K cheapest providers in parallel and take the majority
-     label, paying every consulted bidder.
-  5. Tracks per-(peer_id, service) reputation across requests: every
-     successful call earns +1, every failure -2. Reputation gives a small
-     scoring bonus on the next auction so reliable providers slowly win
-     more of the mesh — emergent market dynamics, no scheduling.
+For every skill in a content-intel plan, the orchestrator:
 
-This is the primitive that turns AgentNetwork from "P2P RPC" into a
-runtime-composed marketplace. New providers join just by tagging
-`content-intel`; the orchestrator finds them next request and they
-compete on price/ETA/reputation immediately.
+  1. opens an auction with auction-svc      (POST /v1/open)
+  2. asks every candidate provider for a /v1/quote
+  3. forwards each quote into the auction   (POST /v1/bid)
+  4. closes the auction                     (POST /v1/close)
+  5. calls the winner's actual skill endpoint
+  6. reports the outcome to reputation-svc  (POST /v1/report)
+
+If the protocol services are unreachable the orchestrator degrades to a
+local "best-bid" pick — auctions and reputation are *protocol* services, not
+hard dependencies. New providers join the marketplace just by tagging
+`content-intel` and exposing `/v1/quote`.
+
+Endpoints
+---------
+  POST /v1/analyze     {text, intent?, consensus?}    → full report
+  GET  /v1/discover                                    → mesh catalogue
+  GET  /v1/marketplace                                 → live reputation+auction
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ import re
 import sys
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any, Optional
 
 import uvicorn
@@ -50,8 +51,6 @@ PORT = int(os.environ.get("ORCHESTRATOR_PORT", "7406"))
 PER_CALL = int(os.environ.get("ORCHESTRATOR_PER_CALL", "0"))
 ANET_BASE_URL = os.environ.get("ANET_BASE_URL", "http://127.0.0.1:14106")
 
-# Skills the orchestrator has a handler for. Discovered skills not in this
-# list still appear in the mesh catalogue.
 KNOWN_SKILLS = [
     "translate", "translate-en-zh", "extract", "keywords",
     "sentiment", "summarise", "classify", "factcheck",
@@ -68,56 +67,10 @@ SKILL_PATHS = {
     "factcheck":          ("/v1/factcheck",       lambda text, r: {"text": text}),
 }
 
-# Skills that benefit from cross-provider consensus voting.
 CONSENSUS_SKILLS = {"sentiment"}
-CONSENSUS_K = 2  # how many cheapest providers to poll for a vote
+CONSENSUS_K = 2
 
 app = FastAPI(title=NAME)
-
-
-# ── reputation ledger (in-memory, persists across requests) ─────────────
-_rep_lock = threading.Lock()
-_reputation: dict[tuple[str, str], dict[str, int]] = defaultdict(
-    lambda: {"wins": 0, "losses": 0, "score": 0, "calls": 0}
-)
-
-
-def _rep_key(peer_id: str, svc_name: str) -> tuple[str, str]:
-    return (peer_id or "", svc_name or "")
-
-
-def _rep_bonus(peer_id: str, svc_name: str) -> float:
-    """Reputation discount applied when scoring an auction bid (lower=better)."""
-    with _rep_lock:
-        rec = _reputation.get(_rep_key(peer_id, svc_name))
-    if not rec:
-        return 0.0
-    return min(4.0, max(-3.0, rec["score"] * 0.25))
-
-
-def _rep_record(peer_id: str, svc_name: str, *, success: bool) -> None:
-    with _rep_lock:
-        rec = _reputation[_rep_key(peer_id, svc_name)]
-        rec["calls"] += 1
-        if success:
-            rec["wins"] += 1
-            rec["score"] += 1
-        else:
-            rec["losses"] += 1
-            rec["score"] -= 2
-
-
-def _rep_snapshot() -> list[dict]:
-    with _rep_lock:
-        out = []
-        for (peer, svc_name), rec in _reputation.items():
-            out.append({
-                "peer": peer[:20], "service": svc_name,
-                "wins": rec["wins"], "losses": rec["losses"],
-                "calls": rec["calls"], "score": rec["score"],
-            })
-        out.sort(key=lambda r: -r["score"])
-        return out
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
@@ -160,9 +113,6 @@ def _peer_has_path(peer: dict, path: str) -> bool:
 
 
 def _discover_all(svc: SvcClient) -> tuple[dict[str, list[dict]], list[dict]]:
-    """{skill: [compatible peers...]} plus the raw catalogue of every
-    content-intel service seen on the mesh. Each per-skill list contains
-    *all* providers, not just one — the auction picks among them."""
     per_skill: dict[str, list[dict]] = {}
     seen_by_key: dict[tuple[str, str], dict] = {}
     for skill in KNOWN_SKILLS:
@@ -207,8 +157,31 @@ def _discover_all(svc: SvcClient) -> tuple[dict[str, list[dict]], list[dict]]:
     return per_skill, list(seen_by_key.values())
 
 
+def _discover_protocol(svc: SvcClient, skill: str) -> Optional[dict]:
+    """Find the first peer offering a Shell Market protocol service."""
+    try:
+        peers = svc.discover(skill=skill, limit=5)
+    except Exception:  # noqa: BLE001
+        return None
+    for p in peers:
+        s_list = p.get("services") or []
+        if s_list:
+            return {"peer_id": p["peer_id"], "service": s_list[0]["name"]}
+    return None
+
+
+def _proto_call(svc: SvcClient, target: dict, path: str,
+                method: str = "POST", body: Any = None) -> dict:
+    try:
+        resp = svc.call(target["peer_id"], target["service"],
+                        path, method=method, body=body)
+        out = resp.get("body") or {}
+        return out if isinstance(out, dict) else {}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
 def _call(svc: SvcClient, target: dict, path: str, body: dict) -> tuple[dict, int, int]:
-    """Returns (json_body, latency_ms, status). status==0 means transport fail."""
     t0 = time.time()
     try:
         resp = svc.call(
@@ -225,8 +198,6 @@ def _call(svc: SvcClient, target: dict, path: str, body: dict) -> tuple[dict, in
 
 
 def _fetch_quote(svc: SvcClient, peer: dict, text: str) -> dict | None:
-    """Ask one peer for a /v1/quote. Returns None if the peer doesn't speak
-    the quote protocol or fails."""
     if not _peer_has_path(peer, "/v1/quote"):
         return None
     body, ms, status = _call(svc, peer, "/v1/quote", {"text": text})
@@ -238,22 +209,81 @@ def _fetch_quote(svc: SvcClient, peer: dict, text: str) -> dict | None:
     return body
 
 
-def _score_quote(q: dict) -> float:
-    """Lower is better.
-
-    Composite: bid (shells) + eta_ms/20 (eta has ~5% the weight of cost)
-    minus reputation bonus (reliable peers get a small discount).
-    """
-    bid = float(q.get("bid", 0))
-    eta = float(q.get("eta_ms", 0))
-    bonus = _rep_bonus(q["_peer_id"], q["_svc_name"])
-    return bid + eta / 20.0 - bonus
+def _local_score(q: dict) -> float:
+    """Fallback scoring when auction-svc is unreachable."""
+    return float(q.get("bid", 0)) + float(q.get("eta_ms", 0)) / 20.0
 
 
-def _auction_skill(
-    svc: SvcClient, skill: str, peers: list[dict], text: str,
+def _run_auction_via_protocol(
+    svc: SvcClient, auction_target: dict,
+    skill: str, peers: list[dict], text: str,
 ) -> dict[str, Any]:
-    """Run a reverse auction for one skill. Returns the auction record."""
+    """Open → bid → close, all through auction-svc on the mesh."""
+    open_resp = _proto_call(svc, auction_target, "/v1/open",
+                            body={"skill": skill, "text": text,
+                                  "k": CONSENSUS_K if skill in CONSENSUS_SKILLS else 1})
+    aid = open_resp.get("auction_id")
+    if not aid:
+        return {"_protocol_failed": True, "_reason": open_resp.get("error", "no auction id")}
+
+    quotes: list[dict] = []
+    for p in peers:
+        q = _fetch_quote(svc, p, text)
+        if q is None:
+            q = {
+                "agent": (p.get("services") or [{}])[0].get("name", "?"),
+                "skill": skill, "bid": 999, "eta_ms": 999, "load": None,
+                "style": "no-quote",
+                "_peer_id": p["peer_id"],
+                "_svc_name": p["services"][0]["name"],
+                "_no_quote": True,
+            }
+        quotes.append(q)
+        _proto_call(svc, auction_target, "/v1/bid", body={
+            "auction_id": aid,
+            "peer_id": q["_peer_id"],
+            "service": q["_svc_name"],
+            "bid": int(q.get("bid", 999)),
+            "eta_ms": int(q.get("eta_ms", 999)),
+            "style": q.get("style", "balanced"),
+            "load": q.get("load"),
+        })
+
+    close_resp = _proto_call(svc, auction_target,
+                             f"/v1/close/{aid}", body={})
+    if "error" in close_resp:
+        return {"_protocol_failed": True, "_reason": close_resp["error"],
+                "auction_id": aid}
+
+    return {
+        "auction_id": aid,
+        "skill": skill,
+        "via_protocol": True,
+        "quotes": [
+            {
+                "peer": (b.get("short_peer") or b.get("peer_id", ""))[:18],
+                "service": b.get("service"),
+                "bid": b.get("bid"),
+                "eta_ms": b.get("eta_ms"),
+                "load": b.get("load"),
+                "style": b.get("style"),
+                "score": b.get("score"),
+                "rep_bonus": b.get("rep_bonus", 0.0),
+                "winner": b.get("winner", False),
+                "no_quote": False,
+            }
+            for b in close_resp.get("all_bids") or []
+        ],
+        "winners": close_resp.get("winners") or [],
+        "winner_peer": (close_resp.get("winners") or [{}])[0].get("peer_id"),
+        "winner_service": (close_resp.get("winners") or [{}])[0].get("service"),
+        "duration_ms": close_resp.get("duration_ms"),
+    }
+
+
+def _run_auction_local(svc: SvcClient, skill: str, peers: list[dict],
+                       text: str) -> dict[str, Any]:
+    """Fallback when auction-svc is unreachable — score locally."""
     quotes: list[dict] = []
     for p in peers:
         q = _fetch_quote(svc, p, text) or {
@@ -265,28 +295,56 @@ def _auction_skill(
             "_no_quote": True,
         }
         quotes.append(q)
-    quotes.sort(key=_score_quote)
-    winner = quotes[0]
+    quotes.sort(key=_local_score)
+    winner = quotes[0] if quotes else None
     return {
         "skill": skill,
+        "via_protocol": False,
+        "_local_fallback": True,
         "quotes": [
             {
                 "peer": q["_peer_id"][:18],
                 "service": q["_svc_name"],
-                "bid": q.get("bid"),
-                "eta_ms": q.get("eta_ms"),
-                "load": q.get("load"),
-                "style": q.get("style"),
-                "score": round(_score_quote(q), 2),
-                "rep_bonus": round(_rep_bonus(q["_peer_id"], q["_svc_name"]), 2),
+                "bid": q.get("bid"), "eta_ms": q.get("eta_ms"),
+                "load": q.get("load"), "style": q.get("style"),
+                "score": round(_local_score(q), 2),
+                "rep_bonus": 0.0,
                 "winner": q is winner,
                 "no_quote": q.get("_no_quote", False),
             }
             for q in quotes
         ],
-        "winner_peer": winner["_peer_id"],
-        "winner_service": winner["_svc_name"],
+        "winners": ([{"peer_id": winner["_peer_id"],
+                      "service": winner["_svc_name"]}]
+                    if winner else []),
+        "winner_peer": winner["_peer_id"] if winner else None,
+        "winner_service": winner["_svc_name"] if winner else None,
     }
+
+
+def _report_reputation(svc: SvcClient, rep_target: Optional[dict],
+                       peer_id: str, service: str, success: bool) -> None:
+    if not rep_target:
+        return
+    try:
+        _proto_call(svc, rep_target, "/v1/report", body={
+            "peer_id": peer_id, "service": service, "success": success,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _find_target(peers: list[dict], short_peer: str,
+                 service: str) -> Optional[dict]:
+    for p in peers:
+        if p["services"][0]["name"] != service:
+            continue
+        if p["peer_id"].startswith(short_peer) or short_peer.startswith(p["peer_id"][:18]):
+            return p
+    for p in peers:
+        if p["services"][0]["name"] == service:
+            return p
+    return None
 
 
 def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
@@ -295,40 +353,55 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
     auctions: list[dict[str, Any]] = []
     consensus_reports: list[dict[str, Any]] = []
     results: dict[str, Any] = {}
+    protocol_status: dict[str, Any] = {}
 
     with SvcClient(base_url=ANET_BASE_URL) as svc:
         per_skill, catalogue = _discover_all(svc)
         plan = decide_plan(text, per_skill, intent)
 
+        auction_target = _discover_protocol(svc, "auction")
+        rep_target = _discover_protocol(svc, "reputation")
+        protocol_status = {
+            "auction_svc": auction_target["service"] if auction_target else None,
+            "reputation_svc": rep_target["service"] if rep_target else None,
+        }
+
         for skill in plan:
             peers = per_skill[skill]
-            path, build = SKILL_PATHS[skill]
 
-            # ── auction ──────────────────────────────────────────────
-            auction = _auction_skill(svc, skill, peers, text)
+            if auction_target:
+                auction = _run_auction_via_protocol(
+                    svc, auction_target, skill, peers, text)
+                if auction.get("_protocol_failed"):
+                    auction = _run_auction_local(svc, skill, peers, text)
+            else:
+                auction = _run_auction_local(svc, skill, peers, text)
             auctions.append(auction)
 
-            # ── consensus (sentiment): poll cheapest CONSENSUS_K  ────
-            do_consensus = consensus and skill in CONSENSUS_SKILLS and len(peers) >= 2
-            chosen_quotes = (
-                auction["quotes"][:CONSENSUS_K] if do_consensus
-                else [auction["quotes"][0]]
+            do_consensus = (
+                consensus and skill in CONSENSUS_SKILLS and len(peers) >= 2
             )
+            chosen_quotes = (
+                [q for q in auction["quotes"] if q.get("winner")]
+                or auction["quotes"][:1]
+            )
+            if do_consensus and len(chosen_quotes) < CONSENSUS_K:
+                # ensure we hit K providers when consensus is requested
+                rest = [q for q in auction["quotes"] if q not in chosen_quotes]
+                chosen_quotes = (chosen_quotes + rest)[:CONSENSUS_K]
 
-            votes: list[tuple[dict, dict, int, int]] = []  # (quote, body, ms, status)
+            path, build = SKILL_PATHS[skill]
+            votes: list[tuple[dict, dict, int, int]] = []
             for q in chosen_quotes:
-                target = next(
-                    (p for p in peers
-                     if p["peer_id"].startswith(q["peer"])
-                     and p["services"][0]["name"] == q["service"]),
-                    None,
-                )
+                target = _find_target(peers, q["peer"], q["service"])
                 if target is None:
                     continue
                 body = build(text, results)
                 out, ms, status = _call(svc, target, path, body)
                 ok = status < 400 and not out.get("error")
-                _rep_record(target["peer_id"], target["services"][0]["name"], success=ok)
+                _report_reputation(svc, rep_target,
+                                   target["peer_id"],
+                                   target["services"][0]["name"], ok)
                 votes.append((q, out, ms, status))
                 cost_model = target["services"][0].get("cost_model") or {}
                 cost = cost_model.get("per_call", 0) or 0
@@ -341,15 +414,15 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
                     "cost": cost,
                     "status": status,
                     "auctioned": True,
-                    "winner": q is auction["quotes"][0],
+                    "winner": q is chosen_quotes[0],
                     "consensus_member": do_consensus,
                 })
 
-            # ── pick the canonical answer ────────────────────────────
             primary_out = votes[0][1] if votes else {}
             if do_consensus and len(votes) > 1:
                 labels = [
-                    (v[1].get("label") or "neutral") for v in votes if isinstance(v[1], dict)
+                    (v[1].get("label") or "neutral")
+                    for v in votes if isinstance(v[1], dict)
                 ]
                 tally = Counter(labels)
                 majority_label, _ = tally.most_common(1)[0]
@@ -377,7 +450,6 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
                     "consensus": True,
                 }
 
-            # ── merge typed outputs ──────────────────────────────────
             out = primary_out
             if skill == "translate":
                 results["translated"] = out.get("translated")
@@ -408,6 +480,13 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
                     "counts": out.get("counts", {}),
                 }
 
+        # Pull a fresh leaderboard from reputation-svc for the report.
+        leaderboard = []
+        if rep_target:
+            lb = _proto_call(svc, rep_target, "/v1/leaderboard?limit=8",
+                             method="GET", body=None)
+            leaderboard = (lb.get("leaderboard") or [])[:8]
+
     total_cost = sum(s["cost"] for s in steps)
     missing = [k for k in KNOWN_SKILLS if k not in per_skill]
     return {
@@ -422,8 +501,9 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
         "missing_skills": missing,
         "total_cost": total_cost,
         "total_ms": int((time.time() - started) * 1000),
-        "reputation_top": _rep_snapshot()[:8],
+        "reputation_top": leaderboard,
         "consensus_enabled": consensus,
+        "protocol_services": protocol_status,
         "agent": NAME,
     }
 
@@ -436,10 +516,11 @@ def health():
 @app.get("/meta")
 def meta():
     return {
-        "name": NAME, "version": "0.3.0", "skill": "orchestrator",
+        "name": NAME, "version": "1.0.0", "skill": "orchestrator",
         "known_skills": KNOWN_SKILLS,
         "consensus_skills": list(CONSENSUS_SKILLS),
-        "mode": "self-composing reverse-auction marketplace",
+        "mode": "shell-market-protocol client",
+        "protocol_dependencies": ["auction", "reputation"],
     }
 
 
@@ -447,6 +528,8 @@ def meta():
 def do_discover():
     with SvcClient(base_url=ANET_BASE_URL) as svc:
         per_skill, catalogue = _discover_all(svc)
+        auction_target = _discover_protocol(svc, "auction")
+        rep_target = _discover_protocol(svc, "reputation")
     return {
         "catalogue": catalogue,
         "by_skill": {
@@ -456,14 +539,32 @@ def do_discover():
         },
         "known_skills": KNOWN_SKILLS,
         "count": len(catalogue),
+        "protocol_services": {
+            "auction": auction_target,
+            "reputation": rep_target,
+        },
     }
 
 
 @app.get("/v1/marketplace")
 def do_marketplace():
-    """Reputation snapshot — who's earned the most trust over time."""
+    """Live snapshot from the protocol services."""
+    with SvcClient(base_url=ANET_BASE_URL) as svc:
+        rep_target = _discover_protocol(svc, "reputation")
+        auction_target = _discover_protocol(svc, "auction")
+        leaderboard = []
+        history = []
+        if rep_target:
+            lb = _proto_call(svc, rep_target, "/v1/leaderboard?limit=20",
+                             method="GET", body=None)
+            leaderboard = lb.get("leaderboard") or []
+        if auction_target:
+            h = _proto_call(svc, auction_target, "/v1/history?limit=20",
+                            method="GET", body=None)
+            history = h.get("history") or []
     return {
-        "reputation": _rep_snapshot(),
+        "reputation": leaderboard,
+        "recent_auctions": history,
         "consensus_skills": list(CONSENSUS_SKILLS),
         "consensus_k": CONSENSUS_K,
     }
@@ -479,15 +580,16 @@ async def do_analyze(
     intent = (body.get("intent") or "analyze").strip()
     consensus = bool(body.get("consensus", True))
     print(
-        f"[orchestrator] caller={x_agent_did} intent={intent} consensus={consensus} "
-        f"text={text[:60]!r}",
+        f"[orchestrator] caller={x_agent_did} intent={intent} "
+        f"consensus={consensus} text={text[:60]!r}",
         flush=True,
     )
     report = run_pipeline(text, intent, consensus)
     print(
         f"[orchestrator]   ↳ plan={report['pipeline_plan']} "
         f"ms={report['total_ms']} cost={report['total_cost']} "
-        f"auctions={len(report['auctions'])}",
+        f"auctions={len(report['auctions'])} "
+        f"protocol={report['protocol_services']}",
         flush=True,
     )
     return JSONResponse(report)
@@ -499,8 +601,8 @@ def main() -> None:
             NAME, PORT,
             paths=["/v1/analyze", "/v1/discover", "/v1/marketplace",
                    "/health", "/meta"],
-            tags=["orchestrator", "pipeline", "marketplace", "content-intel"],
-            description="Self-composing reverse-auction marketplace orchestrator",
+            tags=["orchestrator", "pipeline", "shell-market", "content-intel"],
+            description="Pipeline composer over the Shell Market Protocol",
             per_call=PER_CALL, base_url=ANET_BASE_URL,
         ),
         daemon=True,

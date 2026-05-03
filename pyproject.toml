@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "anet-content-intel"
-version = "0.1.0"
-description = "AgentNetwork hackathon — Content Intelligence Pipeline (multi-agent P2P)"
+name = "shell-market-protocol"
+version = "1.0.0"
+description = "Shell Market Protocol — the first service-trading protocol for AgentNetwork. Sealed reverse auctions + reputation + consensus over P2P mesh."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}

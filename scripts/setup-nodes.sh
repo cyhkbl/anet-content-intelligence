@@ -1,31 +1,34 @@
 #!/usr/bin/env bash
-# Spin up nine independent anet daemons on this laptop and seed cross-node
-# credit ledgers so priced calls don't hit 402.
+# Spin up 13 independent anet daemons and seed cross-node credit ledgers.
 #
-# Layout (matches CLAUDE.md / SPEC.md + IMPROVE.md):
-#   /tmp/anet-ci-u1   API=:14101  P2P=:14201   (translate-svc)
-#   /tmp/anet-ci-u2   API=:14102  P2P=:14202   (extract-svc)
-#   /tmp/anet-ci-u3   API=:14103  P2P=:14203   (sentiment-svc)
-#   /tmp/anet-ci-u4   API=:14104  P2P=:14204   (summarise-svc)
-#   /tmp/anet-ci-u5   API=:14105  P2P=:14205   (classify-svc)
-#   /tmp/anet-ci-u6   API=:14106  P2P=:14206   (orchestrator-svc)
-#   /tmp/anet-ci-u7   API=:14107  P2P=:14207   (factcheck-svc)
-#   /tmp/anet-ci-u8   API=:14108  P2P=:14208   (translate-en-zh-svc)
-#   /tmp/anet-ci-u9   API=:14109  P2P=:14209   (keywords-svc)
-#   /tmp/anet-ci-u10  API=:14110  P2P=:14210   (alt providers — auction competitors)
+# Layout:
+#   u1  /tmp/anet-ci-u1   API=:14101  P2P=:14201   translate-svc
+#   u2  /tmp/anet-ci-u2   API=:14102  P2P=:14202   extract-svc
+#   u3  /tmp/anet-ci-u3   API=:14103  P2P=:14203   sentiment-svc
+#   u4  /tmp/anet-ci-u4   API=:14104  P2P=:14204   summarise-svc
+#   u5  /tmp/anet-ci-u5   API=:14105  P2P=:14205   classify-svc
+#   u6  /tmp/anet-ci-u6   API=:14106  P2P=:14206   orchestrator-svc
+#   u7  /tmp/anet-ci-u7   API=:14107  P2P=:14207   factcheck-svc
+#   u8  /tmp/anet-ci-u8   API=:14108  P2P=:14208   translate-en-zh-svc
+#   u9  /tmp/anet-ci-u9   API=:14109  P2P=:14209   keywords-svc
+#   u10 /tmp/anet-ci-u10  API=:14110  P2P=:14210   alt providers (auction competitors)
+#   u11 /tmp/anet-ci-u11  API=:14111  P2P=:14211   reputation-svc      [Shell Market Protocol]
+#   u12 /tmp/anet-ci-u12  API=:14112  P2P=:14212   auction-svc         [Shell Market Protocol]
+#   u13 /tmp/anet-ci-u13  API=:14113  P2P=:14213   market-dashboard-svc[Shell Market Protocol]
 #
-# Daemons 2-10 bootstrap off daemon-1 to form one mesh.
+# Daemons 2-13 bootstrap off daemon-1 to form one mesh.
 
 set -euo pipefail
 ANET="${ANET:-anet}"
 
-API=(14101 14102 14103 14104 14105 14106 14107 14108 14109 14110)
-P2P=(14201 14202 14203 14204 14205 14206 14207 14208 14209 14210)
+API=(14101 14102 14103 14104 14105 14106 14107 14108 14109 14110 14111 14112 14113)
+P2P=(14201 14202 14203 14204 14205 14206 14207 14208 14209 14210 14211 14212 14213)
 HOMES=(
   /tmp/anet-ci-u1 /tmp/anet-ci-u2 /tmp/anet-ci-u3
   /tmp/anet-ci-u4 /tmp/anet-ci-u5 /tmp/anet-ci-u6
   /tmp/anet-ci-u7 /tmp/anet-ci-u8 /tmp/anet-ci-u9
-  /tmp/anet-ci-u10
+  /tmp/anet-ci-u10 /tmp/anet-ci-u11 /tmp/anet-ci-u12
+  /tmp/anet-ci-u13
 )
 N=${#HOMES[@]}
 
@@ -71,7 +74,6 @@ cmd_start() {
           | python3 -c "import sys,json;print(json.load(sys.stdin)['peer_id'])")
   green "u1 alive PEER=$PEER1"
 
-  # ── daemons 2-N (bootstrapped) ──────────────────────────────────────
   for i in $(seq 1 $((N-1))); do
     BOOT="\"/ip4/127.0.0.1/tcp/${P2P[0]}/p2p/$PEER1\""
     write_config "${HOMES[$i]}" "${API[$i]}" "${P2P[$i]}" "$BOOT"
@@ -121,23 +123,28 @@ cmd_start() {
   cat <<EOF
 
 Daemon URLs:
-  u1 translate         http://127.0.0.1:${API[0]}   HOME=${HOMES[0]}
-  u2 extract           http://127.0.0.1:${API[1]}   HOME=${HOMES[1]}
-  u3 sentiment         http://127.0.0.1:${API[2]}   HOME=${HOMES[2]}
-  u4 summarise         http://127.0.0.1:${API[3]}   HOME=${HOMES[3]}
-  u5 classify          http://127.0.0.1:${API[4]}   HOME=${HOMES[4]}
-  u6 orchestrator      http://127.0.0.1:${API[5]}   HOME=${HOMES[5]}
-  u7 factcheck         http://127.0.0.1:${API[6]}   HOME=${HOMES[6]}
-  u8 translate-en-zh   http://127.0.0.1:${API[7]}   HOME=${HOMES[7]}
-  u9 keywords          http://127.0.0.1:${API[8]}   HOME=${HOMES[8]}
-  u10 alt-providers    http://127.0.0.1:${API[9]}   HOME=${HOMES[9]}
+  u1  translate           http://127.0.0.1:${API[0]}    HOME=${HOMES[0]}
+  u2  extract             http://127.0.0.1:${API[1]}    HOME=${HOMES[1]}
+  u3  sentiment           http://127.0.0.1:${API[2]}    HOME=${HOMES[2]}
+  u4  summarise           http://127.0.0.1:${API[3]}    HOME=${HOMES[3]}
+  u5  classify            http://127.0.0.1:${API[4]}    HOME=${HOMES[4]}
+  u6  orchestrator        http://127.0.0.1:${API[5]}    HOME=${HOMES[5]}
+  u7  factcheck           http://127.0.0.1:${API[6]}    HOME=${HOMES[6]}
+  u8  translate-en-zh     http://127.0.0.1:${API[7]}    HOME=${HOMES[7]}
+  u9  keywords            http://127.0.0.1:${API[8]}    HOME=${HOMES[8]}
+  u10 alt-providers       http://127.0.0.1:${API[9]}    HOME=${HOMES[9]}
+  u11 reputation-svc      http://127.0.0.1:${API[10]}   HOME=${HOMES[10]}     [Shell Market Protocol]
+  u12 auction-svc         http://127.0.0.1:${API[11]}   HOME=${HOMES[11]}     [Shell Market Protocol]
+  u13 market-dashboard    http://127.0.0.1:${API[12]}   HOME=${HOMES[12]}     [Shell Market Protocol]
 
-Next: bash scripts/run-all.sh    # start the 9 agents + dashboard
+Next: bash scripts/run-all.sh    # start agents + protocol services
 EOF
 }
 
 cmd_stop() {
-  for p in "${API[@]}" "${P2P[@]}" 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 7413 7415 7419; do
+  for p in "${API[@]}" "${P2P[@]}" \
+           7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 \
+           7413 7415 7419 7420 7421 7422; do
     lsof -ti tcp:"$p" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   done
   pkill -f "anet daemon" 2>/dev/null || true
