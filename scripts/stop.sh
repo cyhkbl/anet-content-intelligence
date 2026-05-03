@@ -15,7 +15,7 @@ fi
 
 # Kill everything bound to our agent, dashboard, protocol, or daemon ports.
 for p in 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 \
-         7413 7415 7419 7420 7421 7422 \
+         7413 7415 7419 7420 7421 7422 7423 7424 7425 7426 7427 \
          14101 14102 14103 14104 14105 14106 14107 14108 14109 14110 \
          14111 14112 14113 \
          14201 14202 14203 14204 14205 14206 14207 14208 14209 14210 \
@@ -24,5 +24,10 @@ for p in 7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 \
 done
 
 pkill -f "anet daemon" 2>/dev/null || true
+pkill -f "agents\." 2>/dev/null || true
+if [ -f /tmp/deploy-pids ]; then
+  while read -r pid; do [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true; done < /tmp/deploy-pids
+  rm -f /tmp/deploy-pids
+fi
 
 green "stopped agents + protocol services + daemons"

@@ -144,7 +144,7 @@ EOF
 cmd_stop() {
   for p in "${API[@]}" "${P2P[@]}" \
            7400 7401 7402 7403 7404 7405 7406 7407 7408 7409 \
-           7413 7415 7419 7420 7421 7422; do
+           7413 7415 7419 7420 7421 7422 7423 7424 7425 7426 7427; do
     lsof -ti tcp:"$p" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
   done
   pkill -f "anet daemon" 2>/dev/null || true

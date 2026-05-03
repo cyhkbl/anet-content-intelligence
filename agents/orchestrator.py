@@ -361,10 +361,19 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
 
         auction_target = _discover_protocol(svc, "auction")
         rep_target = _discover_protocol(svc, "reputation")
+        settle_target = _discover_protocol(svc, "settlement")
+        feed_target = _discover_protocol(svc, "market-feed")
         protocol_status = {
             "auction_svc": auction_target["service"] if auction_target else None,
             "reputation_svc": rep_target["service"] if rep_target else None,
+            "settlement_svc": settle_target["service"] if settle_target else None,
+            "market_feed_svc": feed_target["service"] if feed_target else None,
         }
+
+        def _publish(kind: str, data: dict) -> None:
+            if feed_target:
+                _proto_call(svc, feed_target, "/v1/publish",
+                            body={"kind": kind, "data": data})
 
         for skill in plan:
             peers = per_skill[skill]
@@ -377,6 +386,14 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
             else:
                 auction = _run_auction_local(svc, skill, peers, text)
             auctions.append(auction)
+            _publish("auction.closed", {
+                "auction_id": auction.get("auction_id"),
+                "skill": skill,
+                "bidders": len(auction.get("quotes") or []),
+                "winner_service": auction.get("winner_service"),
+                "winner_peer": (auction.get("winner_peer") or "")[:18],
+                "winners": auction.get("winners") or [],
+            })
 
             do_consensus = (
                 consensus and skill in CONSENSUS_SKILLS and len(peers) >= 2
@@ -405,6 +422,22 @@ def run_pipeline(text: str, intent: str, consensus: bool) -> dict[str, Any]:
                 votes.append((q, out, ms, status))
                 cost_model = target["services"][0].get("cost_model") or {}
                 cost = cost_model.get("per_call", 0) or 0
+                if ok and settle_target and cost > 0:
+                    _proto_call(svc, settle_target, "/v1/record", body={
+                        "auction_id": auction.get("auction_id") or "",
+                        "skill": skill,
+                        "payer_peer": "orchestrator",
+                        "payee_peer": target["peer_id"],
+                        "payee_service": target["services"][0]["name"],
+                        "shells": cost,
+                        "eta_ms": ms,
+                    })
+                _publish("step.completed", {
+                    "skill": skill, "service": target["services"][0]["name"],
+                    "peer": target["peer_id"][:18], "ms": ms,
+                    "cost": cost, "ok": ok,
+                    "auction_id": auction.get("auction_id"),
+                })
                 steps.append({
                     "skill": skill,
                     "peer": target["peer_id"][:18],
@@ -607,7 +640,7 @@ def main() -> None:
         ),
         daemon=True,
     ).start()
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host=os.environ.get("LISTEN_HOST","0.0.0.0"), port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":

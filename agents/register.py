@@ -28,6 +28,11 @@ def register_until_ready(
     base_url: Optional[str] = None,
 ) -> None:
     base_url = base_url or os.environ.get("ANET_BASE_URL", "http://127.0.0.1:13921")
+    # The local daemon's /api/svc/register enforces a localhost endpoint, so
+    # ANS routing always uses 127.0.0.1. Services *also* bind on LISTEN_HOST
+    # (default 0.0.0.0), so direct HTTP from outside the box still works —
+    # PUBLIC_HOST is what we advertise to humans and external callers.
+    public_host = os.environ.get("PUBLIC_HOST", "127.0.0.1").strip() or "127.0.0.1"
 
     for _ in range(40):
         try:
@@ -65,6 +70,8 @@ def register_until_ready(
 
     ans = (resp.get("ans") or {})
     print(
-        f"[{name}] ✓ registered @ :{port} (per_call={per_call}, ans.published={ans.get('published')})",
+        f"[{name}] ✓ registered :{port} "
+        f"(public=http://{public_host}:{port}, per_call={per_call}, "
+        f"ans.published={ans.get('published')})",
         file=sys.stderr,
     )

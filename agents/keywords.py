@@ -122,7 +122,7 @@ def main() -> None:
         ),
         daemon=True,
     ).start()
-    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host=os.environ.get("LISTEN_HOST","0.0.0.0"), port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":
